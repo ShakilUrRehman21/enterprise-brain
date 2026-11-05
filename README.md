@@ -140,3 +140,4 @@ Follow the step-by-step evaluation guide in [`docs/DEMO_SCRIPT.md`](docs/DEMO_SC
 - **Pre-retrieval SQL boundary:** Documents are checked for authorization before vector distance calculation.
 - **Untrusted context containment:** Documents are enclosed in `<document_chunk>` XML tags and treated strictly as passive data.
 - **Citation pruning:** Hallucinated or non-existent chunk references are eliminated before responses are returned.
+

@@ -48,3 +48,4 @@ def get_latest_evaluation_report(
         runner = EvaluationRunner(db)
         _cached_report = runner.run_all(current_user)
     return _cached_report
+

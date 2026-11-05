@@ -3,8 +3,8 @@
   "retrieval_recall_at_5": 0.9844,
   "retrieval_precision_at_5": 0.6625,
   "mrr": 0.901,
-  "answer_correctness": 0.6394,
-  "citation_precision": 1.0,
+  "answer_correctness": 0.7021,
+  "citation_precision": 0.8646,
   "citation_recall": 0.9844,
   "unsupported_claim_rate": 0.0,
   "abstention_accuracy": 1.0,
@@ -16,8 +16,8 @@
     },
     "Multi-document": {
       "total": 3,
-      "passed": 0,
-      "accuracy": 0.0
+      "passed": 1,
+      "accuracy": 0.333
     },
     "Synthesis": {
       "total": 4,
@@ -46,22 +46,31 @@
       "category": "Direct factual",
       "question": "What is the maximum reimbursement deadline for employee business expenses?",
       "expected": "Reimbursement requests must be submitted within 30 days of the expense date.",
-      "generated": "Employees must submit expense reports within 30 days of incurring business expenses. [4]\n\n**Sources:**\n[4] Employee Travel Policy \u2014 Page 2",
-      "passed": true,
+      "generated": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Unused annual leave up to 5 business days may be carried over into the subsequent calendar year, expiring on March 31. [1] Daily meal allowance is capped at $75 per day during out-of-state business travel. Personal alcohol expenses are not eligible for corporate reimbursement. [2]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 1\n[2] Employee Travel Policy \u2014 Page 3",
+      "passed": false,
       "citations": [
         {
-          "citation_number": 4,
+          "citation_number": 1,
+          "document_id": "2b34c36e-c022-429f-b71a-6578f6d42552",
+          "document_title": "Employee HR Policy",
+          "page_number": 1,
+          "section_title": "Section 1: Annual Leave and Holidays",
+          "chunk_id": "92ffb70e-1dd5-4395-9e31-27fe0d58c406",
+          "exact_passage": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Vacation time begins accruing on the first day of active employment. Unused annual leave up to 5 business days may be carried over into t..."
+        },
+        {
+          "citation_number": 2,
           "document_id": "2e72787d-1bb2-466a-a5e2-7d225156880b",
           "document_title": "Employee Travel Policy",
-          "page_number": 2,
-          "section_title": "Section 2: Reimbursement Deadlines",
-          "chunk_id": "a5cae7f2-9e1f-4d86-bb06-9916a53cc11a",
-          "exact_passage": "Employees must submit expense reports within 30 days of incurring business expenses. Late submissions beyond 30 days will be rejected unless granted prior written VP approval. Itemized receipts are mandatory for any expense exceeding $25."
+          "page_number": 3,
+          "section_title": "Section 3: Meal Allowances and Exclusions",
+          "chunk_id": "eb2feaba-97dc-44f1-bc14-5a4c24585de2",
+          "exact_passage": "Daily meal allowance is capped at $75 per day during out-of-state business travel. Personal alcohol expenses are not eligible for corporate reimbursement. Tips and gratuities up to 20% on eligible meals are reimbursable."
         }
       ],
       "recall_at_5": 1.0,
       "mrr": 0.5,
-      "correctness": 0.5
+      "correctness": 0.25
     },
     {
       "id": "eval-02",
@@ -90,7 +99,7 @@
       "category": "Direct factual",
       "question": "How many days of paid annual vacation leave are granted to full-time employees?",
       "expected": "Employees are granted 25 days of paid annual vacation leave per calendar year.",
-      "generated": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Vacation time begins accruing on the first day of active employment. Unused annual leave up to 5 business days may be carried over into the subsequent calendar year, expiring on March 31. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 1",
+      "generated": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Vacation time begins accruing on the first day of active employment. [1] Senior executives are entitled to 45 days of executive sabbatical leave per calendar year. Executive golden parachute severance packages provide 24 months of full base salary plus accelerated equity vesting upon qualifying change of control. [2] Employees must submit expense reports within 30 days of incurring business expenses. Late submissions beyond 30 days will be rejected unless granted prior written VP approval. [3]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 1\n[2] Confidential Executive Strategy and Compensation \u2014 Page 1\n[3] Employee Travel Policy \u2014 Page 2",
       "passed": true,
       "citations": [
         {
@@ -101,6 +110,24 @@
           "section_title": "Section 1: Annual Leave and Holidays",
           "chunk_id": "92ffb70e-1dd5-4395-9e31-27fe0d58c406",
           "exact_passage": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Vacation time begins accruing on the first day of active employment. Unused annual leave up to 5 business days may be carried over into t..."
+        },
+        {
+          "citation_number": 2,
+          "document_id": "794b1eb0-4b64-4b7e-9e1a-5b6847a851e6",
+          "document_title": "Confidential Executive Strategy and Compensation",
+          "page_number": 1,
+          "section_title": "Section 1: Executive Sabbatical and Severance",
+          "chunk_id": "7ebb2567-9153-4c7f-8afb-72a3ae4c8bca",
+          "exact_passage": "Senior executives are entitled to 45 days of executive sabbatical leave per calendar year. Executive golden parachute severance packages provide 24 months of full base salary plus accelerated equity vesting upon qualifying change of control..."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "2e72787d-1bb2-466a-a5e2-7d225156880b",
+          "document_title": "Employee Travel Policy",
+          "page_number": 2,
+          "section_title": "Section 2: Reimbursement Deadlines",
+          "chunk_id": "a5cae7f2-9e1f-4d86-bb06-9916a53cc11a",
+          "exact_passage": "Employees must submit expense reports within 30 days of incurring business expenses. Late submissions beyond 30 days will be rejected unless granted prior written VP approval. Itemized receipts are mandatory for any expense exceeding $25."
         }
       ],
       "recall_at_5": 1.0,
@@ -112,7 +139,7 @@
       "category": "Direct factual",
       "question": "What is the duration of fully paid parental leave for primary caregivers?",
       "expected": "Parental leave provides 16 weeks of fully paid leave for primary caregivers.",
-      "generated": "Parental leave provides 16 weeks of fully paid leave for primary caregivers following the birth, adoption, or foster placement of a child. Secondary caregivers are entitled to 6 weeks of fully paid parental leave. Parental leave must be taken within the first 12 months of the qualifying event. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 2",
+      "generated": "Parental leave provides 16 weeks of fully paid leave for primary caregivers following the birth, adoption, or foster placement of a child. Secondary caregivers are entitled to 6 weeks of fully paid parental leave. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 2",
       "passed": true,
       "citations": [
         {
@@ -134,8 +161,8 @@
       "category": "Direct factual",
       "question": "When does sick leave require a doctor note?",
       "expected": "Sick leave requires a medical doctor's note after three consecutive absent business days.",
-      "generated": "Employees receive 10 paid sick days annually. Routine sick leave does not require medical certification for days 1 and 2. However, sick leave requires a doctor note after three consecutive absent days. Extended medical leaves exceeding two weeks must be registered with the Benefits Administration department. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 3",
-      "passed": true,
+      "generated": "Employees receive 10 paid sick days annually. Routine sick leave does not require medical certification for days 1 and 2. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 3",
+      "passed": false,
       "citations": [
         {
           "citation_number": 1,
@@ -149,19 +176,29 @@
       ],
       "recall_at_5": 1.0,
       "mrr": 1.0,
-      "correctness": 0.917
+      "correctness": 0.333
     },
     {
       "id": "eval-06",
       "category": "Direct factual",
       "question": "What network communication protocol is required between internal microservices?",
       "expected": "Internal microservices must communicate via gRPC or authenticated HTTPS with mutual TLS.",
-      "generated": "I couldn't find sufficient evidence in the accessible documents to answer this question confidently.",
-      "passed": false,
-      "citations": [],
+      "generated": "All internal backend microservices must communicate via gRPC or authenticated HTTPS with mutual TLS (mTLS). Unencrypted internal HTTP communication is strictly prohibited across all environments. [1]\n\n**Sources:**\n[1] Engineering Architecture Guide \u2014 Page 1",
+      "passed": true,
+      "citations": [
+        {
+          "citation_number": 1,
+          "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
+          "document_title": "Engineering Architecture Guide",
+          "page_number": 1,
+          "section_title": "Section 1: Service Architecture and Protocols",
+          "chunk_id": "eefb97ed-8273-4da4-95e8-9ef0bad0de84",
+          "exact_passage": "All internal backend microservices must communicate via gRPC or authenticated HTTPS with mutual TLS (mTLS). Unencrypted internal HTTP communication is strictly prohibited across all environments. Every API service must publish OpenAPI or Pr..."
+        }
+      ],
       "recall_at_5": 1.0,
       "mrr": 1.0,
-      "correctness": 0.0
+      "correctness": 1.0
     },
     {
       "id": "eval-07",
@@ -190,19 +227,29 @@
       "category": "Direct factual",
       "question": "What container orchestrator is specified for production service deployments?",
       "expected": "All production workloads run on Kubernetes with automated canary deployments.",
-      "generated": "I couldn't find sufficient evidence in the accessible documents to answer this question confidently.",
-      "passed": false,
-      "citations": [],
+      "generated": "All production workloads run on Kubernetes with automated canary deployments. Deployments must pass continuous integration healthchecks and automated vulnerability scanning before traffic promotion. [2]\n\n**Sources:**\n[2] Engineering Architecture Guide \u2014 Page 3",
+      "passed": true,
+      "citations": [
+        {
+          "citation_number": 2,
+          "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
+          "document_title": "Engineering Architecture Guide",
+          "page_number": 3,
+          "section_title": "Section 3: Orchestration and Deployment",
+          "chunk_id": "c85178ac-b293-4691-a7f1-46cb849cd98e",
+          "exact_passage": "All production workloads run on Kubernetes with automated canary deployments. Deployments must pass continuous integration healthchecks and automated vulnerability scanning before traffic promotion. Services must maintain at least 3 replica..."
+        }
+      ],
       "recall_at_5": 1.0,
       "mrr": 0.5,
-      "correctness": 0.0
+      "correctness": 1.0
     },
     {
       "id": "eval-09",
       "category": "Direct factual",
       "question": "How often must external vendors undergo security and compliance audits?",
       "expected": "All third-party vendors must complete an independent SOC2 Type II audit annually.",
-      "generated": "All external vendors and third-party SaaS integrations must complete an independent SOC2 Type II audit annually. Vendor data processing agreements (DPAs) must be approved by the Chief Information Security Officer prior to contract execution. [1]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 3",
+      "generated": "All external vendors and third-party SaaS integrations must complete an independent SOC2 Type II audit annually. Vendor data processing agreements (DPAs) must be approved by the Chief Information Security Officer prior to contract execution. [1] Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours. Lodging bookings must adhere to corporate hotel rate caps. [3]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 3\n[3] Employee Travel Policy \u2014 Page 1",
       "passed": true,
       "citations": [
         {
@@ -213,6 +260,15 @@
           "section_title": "Section 3: Vendor Risk Management",
           "chunk_id": "af031c19-090a-439b-a2d6-891ea1cad669",
           "exact_passage": "All external vendors and third-party SaaS integrations must complete an independent SOC2 Type II audit annually. Vendor data processing agreements (DPAs) must be approved by the Chief Information Security Officer prior to contract execution..."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "2e72787d-1bb2-466a-a5e2-7d225156880b",
+          "document_title": "Employee Travel Policy",
+          "page_number": 1,
+          "section_title": "Section 1: Travel Pre-approval and Booking",
+          "chunk_id": "5c6566fd-4b12-4b1f-bb41-2723a3dbb00d",
+          "exact_passage": "Direct business travel requires prior approval from department managers. Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours. Lodging bookings must adhere to..."
         }
       ],
       "recall_at_5": 1.0,
@@ -224,7 +280,7 @@
       "category": "Direct factual",
       "question": "What encryption standard is mandated for data at rest across all company databases?",
       "expected": "All persistent enterprise storage must use AES-256 encryption at rest.",
-      "generated": "All persistent enterprise storage must use AES-256 encryption at rest. All data in transit across public networks must use TLS 1. Encryption keys are managed through a centralized Hardware Security Module (HSM) with mandatory annual key rotation. [1]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 1",
+      "generated": "All persistent enterprise storage must use AES-256 encryption at rest. All data in transit across public networks must use TLS 1. [1] All internal backend microservices must communicate via gRPC or authenticated HTTPS with mutual TLS (mTLS). Unencrypted internal HTTP communication is strictly prohibited across all environments. [3]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 1\n[3] Engineering Architecture Guide \u2014 Page 1",
       "passed": true,
       "citations": [
         {
@@ -235,6 +291,15 @@
           "section_title": "Section 1: Data Encryption Standards",
           "chunk_id": "d1121f5d-09c4-4118-ba52-610e84b0d0fb",
           "exact_passage": "All persistent enterprise storage must use AES-256 encryption at rest. All data in transit across public networks must use TLS 1.3 encryption. Encryption keys are managed through a centralized Hardware Security Module (HSM) with mandatory a..."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
+          "document_title": "Engineering Architecture Guide",
+          "page_number": 1,
+          "section_title": "Section 1: Service Architecture and Protocols",
+          "chunk_id": "eefb97ed-8273-4da4-95e8-9ef0bad0de84",
+          "exact_passage": "All internal backend microservices must communicate via gRPC or authenticated HTTPS with mutual TLS (mTLS). Unencrypted internal HTTP communication is strictly prohibited across all environments. Every API service must publish OpenAPI or Pr..."
         }
       ],
       "recall_at_5": 1.0,
@@ -246,7 +311,7 @@
       "category": "Direct factual",
       "question": "What is the minimum character length required for employee corporate passwords?",
       "expected": "Corporate passwords must have a minimum length of 16 characters with multi-factor authentication enforced.",
-      "generated": "Corporate passwords must have a minimum length of 16 characters with multi-factor authentication (MFA) enforced across all systems. Passwords expire every 90 days. [1]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 2",
+      "generated": "Corporate passwords must have a minimum length of 16 characters with multi-factor authentication (MFA) enforced across all systems. Passwords expire every 90 days. [1] Personal alcohol expenses are not eligible for corporate reimbursement. [3]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 2\n[3] Employee Travel Policy \u2014 Page 3",
       "passed": true,
       "citations": [
         {
@@ -257,6 +322,15 @@
           "section_title": "Section 2: Access Control and Authentication",
           "chunk_id": "5ec44799-853f-499b-9f29-c7098c1314ad",
           "exact_passage": "Corporate passwords must have a minimum length of 16 characters with multi-factor authentication (MFA) enforced across all systems. Passwords expire every 90 days. SSH root logins are disabled across all production instances."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "2e72787d-1bb2-466a-a5e2-7d225156880b",
+          "document_title": "Employee Travel Policy",
+          "page_number": 3,
+          "section_title": "Section 3: Meal Allowances and Exclusions",
+          "chunk_id": "eb2feaba-97dc-44f1-bc14-5a4c24585de2",
+          "exact_passage": "Daily meal allowance is capped at $75 per day during out-of-state business travel. Personal alcohol expenses are not eligible for corporate reimbursement. Tips and gratuities up to 20% on eligible meals are reimbursable."
         }
       ],
       "recall_at_5": 1.0,
@@ -290,7 +364,7 @@
       "category": "Direct factual",
       "question": "Which quarterly milestone includes the Multi-tenant Role-Based Access Control redesign?",
       "expected": "The RBAC authorization engine redesign is scheduled for completion in Q2.",
-      "generated": "- Q1 Milestone: Hybrid Semantic and Full-Text Search integration with pgvector and Reciprocal Rank Fusion. - Q2 Milestone: Multi-tenant Role-Based Access Control (RBAC) redesign and automated document permission inheritance. [1]\n\n**Sources:**\n[1] Product Roadmap \u2014 Page 1",
+      "generated": "- Q1 Milestone: Hybrid Semantic and Full-Text Search integration with pgvector and Reciprocal Rank Fusion. - Q2 Milestone: Multi-tenant Role-Based Access Control (RBAC) redesign and automated document permission inheritance. [1] Relational persistence mandates PostgreSQL with row-level security (RLS) enabled on multi-tenant tables. [4] Corporate passwords must have a minimum length of 16 characters with multi-factor authentication (MFA) enforced across all systems. [5]\n\n**Sources:**\n[1] Product Roadmap \u2014 Page 1\n[4] Engineering Architecture Guide \u2014 Page 2\n[5] Security and Compliance Policy \u2014 Page 2",
       "passed": false,
       "citations": [
         {
@@ -301,6 +375,24 @@
           "section_title": "Section 1: First Half Roadmap (Q1 - Q2)",
           "chunk_id": "89f67b58-cd79-4e22-ae29-497d02d15e2e",
           "exact_passage": "- Q1 Milestone: Hybrid Semantic and Full-Text Search integration with pgvector and Reciprocal Rank Fusion.\n- Q2 Milestone: Multi-tenant Role-Based Access Control (RBAC) redesign and automated document permission inheritance."
+        },
+        {
+          "citation_number": 4,
+          "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
+          "document_title": "Engineering Architecture Guide",
+          "page_number": 2,
+          "section_title": "Section 2: Persistence and Relational Data",
+          "chunk_id": "bb95801d-9a58-483b-bb61-625723f205b4",
+          "exact_passage": "Relational persistence mandates PostgreSQL with row-level security (RLS) enabled on multi-tenant tables. Database connection pooling is handled through PgBouncer with a maximum pool limit of 50 connections per instance."
+        },
+        {
+          "citation_number": 5,
+          "document_id": "4ff1f69e-d8df-49f3-8026-f346c09f9010",
+          "document_title": "Security and Compliance Policy",
+          "page_number": 2,
+          "section_title": "Section 2: Access Control and Authentication",
+          "chunk_id": "5ec44799-853f-499b-9f29-c7098c1314ad",
+          "exact_passage": "Corporate passwords must have a minimum length of 16 characters with multi-factor authentication (MFA) enforced across all systems. Passwords expire every 90 days. SSH root logins are disabled across all production instances."
         }
       ],
       "recall_at_5": 1.0,
@@ -312,22 +404,31 @@
       "category": "Multi-document",
       "question": "Compare the security requirements in the Engineering Architecture Guide and the Security Policy.",
       "expected": "The Architecture Guide mandates mutual TLS and zero-trust policies, while the Security Policy enforces AES-256 encryption, MFA, and annual SOC2 Type II vendor audits.",
-      "generated": "Relational persistence mandates PostgreSQL with row-level security (RLS) enabled on multi-tenant tables. [5]\n\n**Sources:**\n[5] Engineering Architecture Guide \u2014 Page 2",
+      "generated": "Encryption keys are managed through a centralized Hardware Security Module (HSM) with mandatory annual key rotation. [1] All production workloads run on Kubernetes with automated canary deployments. [4]\n\n**Sources:**\n[1] Security and Compliance Policy \u2014 Page 1\n[4] Engineering Architecture Guide \u2014 Page 3",
       "passed": false,
       "citations": [
         {
-          "citation_number": 5,
+          "citation_number": 1,
+          "document_id": "4ff1f69e-d8df-49f3-8026-f346c09f9010",
+          "document_title": "Security and Compliance Policy",
+          "page_number": 1,
+          "section_title": "Section 1: Data Encryption Standards",
+          "chunk_id": "d1121f5d-09c4-4118-ba52-610e84b0d0fb",
+          "exact_passage": "All persistent enterprise storage must use AES-256 encryption at rest. All data in transit across public networks must use TLS 1.3 encryption. Encryption keys are managed through a centralized Hardware Security Module (HSM) with mandatory a..."
+        },
+        {
+          "citation_number": 4,
           "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
           "document_title": "Engineering Architecture Guide",
-          "page_number": 2,
-          "section_title": "Section 2: Persistence and Relational Data",
-          "chunk_id": "bb95801d-9a58-483b-bb61-625723f205b4",
-          "exact_passage": "Relational persistence mandates PostgreSQL with row-level security (RLS) enabled on multi-tenant tables. Database connection pooling is handled through PgBouncer with a maximum pool limit of 50 connections per instance."
+          "page_number": 3,
+          "section_title": "Section 3: Orchestration and Deployment",
+          "chunk_id": "c85178ac-b293-4691-a7f1-46cb849cd98e",
+          "exact_passage": "All production workloads run on Kubernetes with automated canary deployments. Deployments must pass continuous integration healthchecks and automated vulnerability scanning before traffic promotion. Services must maintain at least 3 replica..."
         }
       ],
       "recall_at_5": 1.0,
       "mrr": 1.0,
-      "correctness": 0.19
+      "correctness": 0.286
     },
     {
       "id": "eval-15",
@@ -346,12 +447,31 @@
       "category": "Multi-document",
       "question": "What compliance standards govern the deployment pipeline according to engineering and security guidelines?",
       "expected": "Deployments require automated canary validation in Kubernetes along with automated vulnerability scanning before promotion.",
-      "generated": "I couldn't find sufficient evidence in the accessible documents to answer this question confidently.",
-      "passed": false,
-      "citations": [],
+      "generated": "All production workloads run on Kubernetes with automated canary deployments. Deployments must pass continuous integration healthchecks and automated vulnerability scanning before traffic promotion. [1] Vendor data processing agreements (DPAs) must be approved by the Chief Information Security Officer prior to contract execution. [4]\n\n**Sources:**\n[1] Engineering Architecture Guide \u2014 Page 3\n[4] Security and Compliance Policy \u2014 Page 3",
+      "passed": true,
+      "citations": [
+        {
+          "citation_number": 1,
+          "document_id": "dba7ce41-0938-4df6-b23d-4884d57517f1",
+          "document_title": "Engineering Architecture Guide",
+          "page_number": 3,
+          "section_title": "Section 3: Orchestration and Deployment",
+          "chunk_id": "c85178ac-b293-4691-a7f1-46cb849cd98e",
+          "exact_passage": "All production workloads run on Kubernetes with automated canary deployments. Deployments must pass continuous integration healthchecks and automated vulnerability scanning before traffic promotion. Services must maintain at least 3 replica..."
+        },
+        {
+          "citation_number": 4,
+          "document_id": "4ff1f69e-d8df-49f3-8026-f346c09f9010",
+          "document_title": "Security and Compliance Policy",
+          "page_number": 3,
+          "section_title": "Section 3: Vendor Risk Management",
+          "chunk_id": "af031c19-090a-439b-a2d6-891ea1cad669",
+          "exact_passage": "All external vendors and third-party SaaS integrations must complete an independent SOC2 Type II audit annually. Vendor data processing agreements (DPAs) must be approved by the Chief Information Security Officer prior to contract execution..."
+        }
+      ],
       "recall_at_5": 1.0,
       "mrr": 1.0,
-      "correctness": 0.0
+      "correctness": 0.727
     },
     {
       "id": "eval-17",
@@ -466,19 +586,38 @@
       "category": "Contradiction",
       "question": "Are personal alcohol expenses reimbursable under client entertainment guidelines versus travel rules?",
       "expected": "Travel policy strictly forbids alcohol reimbursement, while client entertainment budgets permit alcohol only with prior VP written approval.",
-      "generated": "I couldn't find sufficient evidence in the accessible documents to answer this question confidently.",
+      "generated": "Daily meal allowance is capped at $75 per day during out-of-state business travel. Personal alcohol expenses are not eligible for corporate reimbursement. [1] Q3 roadmap investments restrict travel budget increases to 5%. - Q4 Milestone: Multimodal Document Understanding supporting audio, video transcripts, and complex architectural schematics. [3]\n\n**Sources:**\n[1] Employee Travel Policy \u2014 Page 3\n[3] Product Roadmap \u2014 Page 2",
       "passed": false,
-      "citations": [],
+      "citations": [
+        {
+          "citation_number": 1,
+          "document_id": "2e72787d-1bb2-466a-a5e2-7d225156880b",
+          "document_title": "Employee Travel Policy",
+          "page_number": 3,
+          "section_title": "Section 3: Meal Allowances and Exclusions",
+          "chunk_id": "eb2feaba-97dc-44f1-bc14-5a4c24585de2",
+          "exact_passage": "Daily meal allowance is capped at $75 per day during out-of-state business travel. Personal alcohol expenses are not eligible for corporate reimbursement. Tips and gratuities up to 20% on eligible meals are reimbursable."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "69d036b1-0210-4511-b96a-7fac4d15d39c",
+          "document_title": "Product Roadmap",
+          "page_number": 2,
+          "section_title": "Section 2: Second Half Roadmap (Q3 - Q4)",
+          "chunk_id": "0cdca9e2-d521-4897-b1ee-d8e801788656",
+          "exact_passage": "- Q3 Milestone: Enterprise Knowledge Graph General Availability with cross-document relationship mapping. Q3 roadmap investments restrict travel budget increases to 5%.\n- Q4 Milestone: Multimodal Document Understanding supporting audio, vid..."
+        }
+      ],
       "recall_at_5": 0.5,
       "mrr": 1.0,
-      "correctness": 0.0
+      "correctness": 0.267
     },
     {
       "id": "eval-27",
       "category": "Contradiction",
       "question": "Does sick leave require doctor verification immediately or after three days?",
       "expected": "Routine sick leave does not require certification for days 1 and 2, but requires a formal doctor's note starting on the third consecutive day.",
-      "generated": "Employees receive 10 paid sick days annually. Routine sick leave does not require medical certification for days 1 and 2. However, sick leave requires a doctor note after three consecutive absent days. Extended medical leaves exceeding two weeks must be registered with the Benefits Administration department. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 3",
+      "generated": "Employees receive 10 paid sick days annually. Routine sick leave does not require medical certification for days 1 and 2. [1]\n\n**Sources:**\n[1] Employee HR Policy \u2014 Page 3",
       "passed": true,
       "citations": [
         {
@@ -493,7 +632,7 @@
       ],
       "recall_at_5": 1.0,
       "mrr": 1.0,
-      "correctness": 0.688
+      "correctness": 0.438
     },
     {
       "id": "eval-28",
@@ -548,7 +687,7 @@
       "category": "Direct factual",
       "question": "Are flight upgrades to business class permitted under standard travel policy?",
       "expected": "Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours.",
-      "generated": "Direct business travel requires prior approval from department managers. Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours. [1]\n\n**Sources:**\n[1] Employee Travel Policy \u2014 Page 1",
+      "generated": "Direct business travel requires prior approval from department managers. Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours. [1] Unused annual leave up to 5 business days may be carried over into the subsequent calendar year, expiring on March 31. [3]\n\n**Sources:**\n[1] Employee Travel Policy \u2014 Page 1\n[3] Employee HR Policy \u2014 Page 1",
       "passed": true,
       "citations": [
         {
@@ -559,6 +698,15 @@
           "section_title": "Section 1: Travel Pre-approval and Booking",
           "chunk_id": "5c6566fd-4b12-4b1f-bb41-2723a3dbb00d",
           "exact_passage": "Direct business travel requires prior approval from department managers. Flights under 6 hours require economy class; business class is only authorized for international flights exceeding 6 continuous hours. Lodging bookings must adhere to..."
+        },
+        {
+          "citation_number": 3,
+          "document_id": "2b34c36e-c022-429f-b71a-6578f6d42552",
+          "document_title": "Employee HR Policy",
+          "page_number": 1,
+          "section_title": "Section 1: Annual Leave and Holidays",
+          "chunk_id": "92ffb70e-1dd5-4395-9e31-27fe0d58c406",
+          "exact_passage": "All full-time permanent employees are granted 25 days of paid annual vacation leave per calendar year. Vacation time begins accruing on the first day of active employment. Unused annual leave up to 5 business days may be carried over into t..."
         }
       ],
       "recall_at_5": 1.0,

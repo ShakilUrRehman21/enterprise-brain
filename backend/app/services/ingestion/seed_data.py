@@ -79,12 +79,24 @@ Daily meal allowance is capped at $75 per day during out-of-state business trave
 ## Section 2: Second Half Roadmap (Q3 - Q4)
 - Q3 Milestone: Enterprise Knowledge Graph General Availability with cross-document relationship mapping. Q3 roadmap investments restrict travel budget increases to 5%.
 - Q4 Milestone: Multimodal Document Understanding supporting audio, video transcripts, and complex architectural schematics."""
+    },
+    {
+        "filename": "Confidential_Executive_Strategy.txt",
+        "title": "Confidential Executive Strategy and Compensation",
+        "access_level": "private",
+        "content": """# Confidential Executive Strategy and Compensation
+
+## Section 1: Executive Sabbatical and Severance
+Senior executives are entitled to 45 days of executive sabbatical leave per calendar year. Executive golden parachute severance packages provide 24 months of full base salary plus accelerated equity vesting upon qualifying change of control.
+
+## Section 2: M&A Acquisition Targets
+The corporation has earmarked $40M for strategic acquisitions in Q4 2026 targeting agentic AI developer platforms. All acquisition discussions are strictly confidential under non-disclosure agreements."""
     }
 ]
 
 def seed_enterprise_documents(db: Session, admin_user: User) -> int:
     """
-    Seeds the 5 foundational hackathon demonstration documents if not already indexed.
+    Seeds the foundational hackathon demonstration documents if not already indexed.
     """
     pipeline = IngestionPipeline(db)
     seeded_count = 0
@@ -111,3 +123,16 @@ def seed_enterprise_documents(db: Session, admin_user: User) -> int:
         seeded_count += 1
 
     return seeded_count
+
+def reset_and_seed_clean_documents(db: Session, admin_user: User) -> int:
+    """
+    Cleans up all documents and chunk data, then reseeds the pristine demonstration documents.
+    """
+    from app.models.entities import DocumentChunk, DocumentPermission, Message, Conversation
+    db.query(DocumentChunk).delete()
+    db.query(DocumentPermission).delete()
+    db.query(Document).delete()
+    db.commit()
+
+    return seed_enterprise_documents(db, admin_user)
+

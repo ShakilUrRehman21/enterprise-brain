@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from typing import Generator
@@ -40,6 +41,14 @@ class VectorType(TypeDecorator):
 Base = declarative_base()
 
 def get_engine():
+    # If testing mode is active, use dedicated isolated test SQLite database
+    if os.environ.get("TESTING") == "1":
+        test_engine = create_engine(
+            "sqlite:///./test_enterprise_brain.db",
+            connect_args={"check_same_thread": False}
+        )
+        return test_engine, False
+
     # Attempt to connect to DATABASE_URL (PostgreSQL)
     try:
         engine = create_engine(
@@ -58,6 +67,7 @@ def get_engine():
             settings.SQLITE_FALLBACK_URL,
             connect_args={"check_same_thread": False}
         )
+        return sqlite_engine, False
         return sqlite_engine, False
 
 engine, is_postgres = get_engine()
