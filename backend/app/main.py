@@ -60,6 +60,16 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An internal server error occurred.", "error": str(exc)},
     )
 
+@app.get("/", tags=["Root"])
+async def root():
+    return {
+        "status": "online",
+        "service": settings.PROJECT_NAME,
+        "docs": f"{settings.API_V1_STR}/docs",
+        "health": "/health",
+        "version": "1.0.0"
+    }
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {
