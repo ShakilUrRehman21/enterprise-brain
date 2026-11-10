@@ -1,5 +1,5 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user, require_member
@@ -14,7 +14,8 @@ conversations_router = APIRouter()
 def chat_with_knowledge_base(
     payload: ChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_member)
+    current_user: User = Depends(require_member),
+    x_gemini_api_key: Optional[str] = Header(None, alias="X-Gemini-API-Key")
 ):
     """
     Asks a question grounded in accessible enterprise knowledge.
@@ -25,7 +26,8 @@ def chat_with_knowledge_base(
         query=payload.message,
         user=current_user,
         conversation_id=payload.conversation_id,
-        collection_id=payload.collection_id
+        collection_id=payload.collection_id,
+        api_key=x_gemini_api_key
     )
 
     return ChatResponse(

@@ -88,3 +88,4 @@ WHERE d.status = 'indexed'
 - **Verification Engine:** Citations are verified server-side against actual retrieved chunks; non-existent references are pruned.
 - **Abstention Guarantee:** When sufficient topical evidence is absent, the system returns:
   > *"I couldn't find sufficient evidence in the accessible documents to answer this question confidently."*
+

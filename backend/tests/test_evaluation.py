@@ -38,3 +38,4 @@ def test_evaluation_pipeline_and_seed():
     assert report["retrieval_recall_at_5"] > 0.70
     assert report["abstention_accuracy"] >= 0.85
     assert len(report["category_breakdown"]) >= 5
+
