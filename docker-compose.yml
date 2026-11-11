@@ -1,58 +1,51 @@
-version: '3.8'
-
 services:
   db:
-    image: pgvector/pgvector:pg16
-    container_name: enterprise-brain-db
-    restart: always
+    image: postgres:16
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: brain
       POSTGRES_DB: enterprise_brain
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U brain -d enterprise_brain"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: enterprise-brain-backend
-    restart: always
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://brain:brain@db:5432/enterprise_brain
+      UPLOAD_DIR: /data/uploads
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      - uploads:/data/uploads
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_brain
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
-      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
-      - ENVIRONMENT=production
-    volumes:
-      - ./backend/uploads:/app/uploads
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: enterprise-brain-frontend
-    restart: always
+    build: ./frontend
+    restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      BACKEND_API_URL: http://backend:8000
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
-      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
 
 volumes:
   pgdata:
-
+  uploads:

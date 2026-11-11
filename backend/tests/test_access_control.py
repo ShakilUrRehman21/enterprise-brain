@@ -1,98 +1,69 @@
-import io
-import pytest
-from fastapi.testclient import TestClient
-from app.main import app
-from app.core.database import init_db
+from tests.conftest import register, upload
 
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_db():
-    init_db()
+SECRET = "# Executive Pay\nExecutives receive 45 days of sabbatical leave and a golden parachute of 24 months salary."
 
-def test_user_a_and_user_b_permission_isolation():
-    """
-    Master Prompt Section 5 Security Scenario:
-    User A:
-      - Can access Private Executive Leave Policy
-      - Can access Engineering Guide (Organization-wide)
-    User B:
-      - Can access Engineering Guide
-      - CANNOT access Private Executive Leave Policy
-    User B asks: 'What is the confidential executive leave policy?'
-    Expected: Abstains, no confidential text in context, citations, or response.
-    """
-    client = TestClient(app)
 
-    headers_user_a = {
-        "X-User-Email": "alice_hr_director@enterprise.com",
-        "X-User-Role": "admin",
-        "X-User-Name": "Alice HR Director"
-    }
+def _ask(client, headers, q):
+    r = client.post("/api/chat", json={"message": q}, headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["message"]
 
-    headers_user_b = {
-        "X-User-Email": "bob_engineer@enterprise.com",
-        "X-User-Role": "member",
-        "X-User-Name": "Bob Engineer"
-    }
 
-    # 1. User A uploads confidential HR Policy (Private)
-    hr_content = b"""# Confidential Executive Compensation and Leave Policy
-Executives are granted 45 days of executive sabbatical leave per calendar year.
-Executive golden parachute severance provides 24 months of full salary.
-Executive medical expense reimbursement is unlimited with zero deductible."""
+def test_private_document_is_invisible_to_other_members(client, admin, member):
+    m_headers, _ = member
+    other, _ = register(client, "other@example.com")
+    doc = upload(client, m_headers, "exec.txt", SECRET, access="private", title="Executive Pay")
 
-    files_hr = {"file": ("exec_leave_policy.txt", io.BytesIO(hr_content), "text/plain")}
-    data_hr = {"title": "Confidential Executive Leave Policy", "access_level": "private"}
-    upload_hr = client.post("/api/documents/upload", files=files_hr, data=data_hr, headers=headers_user_a)
-    assert upload_hr.status_code == 200
-    hr_doc_id = upload_hr.json()["id"]
+    assert doc["id"] not in [d["id"] for d in client.get("/api/documents", headers=other).json()]
+    assert client.get(f"/api/documents/{doc['id']}", headers=other).status_code == 404
+    hits = client.post("/api/search", json={"query": "sabbatical golden parachute"}, headers=other).json()["results"]
+    assert all(h["document_id"] != doc["id"] for h in hits)
 
-    # 2. Upload Engineering Guide (Organization-wide)
-    eng_content = b"""# Engineering Architecture Guide
-All microservices run on Kubernetes with automated canary deployments.
-Services must adhere to zero-trust network policies and mutual TLS."""
+    msg = _ask(client, other, "How much sabbatical leave do executives get?")
+    assert msg["abstained"] and msg["citations"] == []
+    assert "45" not in msg["content"]
 
-    files_eng = {"file": ("eng_guide.txt", io.BytesIO(eng_content), "text/plain")}
-    data_eng = {"title": "Engineering Architecture Guide", "access_level": "organization"}
-    upload_eng = client.post("/api/documents/upload", files=files_eng, data=data_eng, headers=headers_user_a)
-    assert upload_eng.status_code == 200
-    eng_doc_id = upload_eng.json()["id"]
+    # Owner and admin can both see it.
+    assert not _ask(client, m_headers, "How much sabbatical leave do executives get?")["abstained"]
+    assert _ask(client, admin[0], "How much sabbatical leave do executives get?")["citations"][0]["document_id"] == doc["id"]
 
-    # 3. Security Check: User B attempts to view document list
-    docs_user_b = client.get("/api/documents", headers=headers_user_b).json()
-    b_doc_ids = [d["id"] for d in docs_user_b]
-    assert eng_doc_id in b_doc_ids
-    assert hr_doc_id not in b_doc_ids, "CRITICAL SECURITY BREACH: User B saw private HR document in list!"
 
-    # 4. Security Check: User B attempts to access HR document by ID
-    direct_get = client.get(f"/api/documents/{hr_doc_id}", headers=headers_user_b)
-    assert direct_get.status_code == 403, f"Expected 403 Forbidden for User B, got {direct_get.status_code}"
+def test_sharing_grants_and_revoking_removes_access(client, admin, member):
+    m_headers, m_user = member
+    a_headers = admin[0]
+    doc = upload(client, a_headers, "exec.txt", SECRET, access="shared", title="Executive Pay", user_ids=[m_user["id"]])
+    assert client.get(f"/api/documents/{doc['id']}", headers=m_headers).status_code == 200
 
-    # 5. Security Check: User B attempts to preview HR document chunks
-    preview_attempt = client.get(f"/api/documents/{hr_doc_id}/preview", headers=headers_user_b)
-    assert preview_attempt.status_code == 403
+    # Switching to private must revoke the earlier share (stale grants bug).
+    r = client.put(f"/api/documents/{doc['id']}/access", json={"access_level": "private", "user_ids": []}, headers=a_headers)
+    assert r.status_code == 200 and r.json()["shared_with"] == []
+    assert client.get(f"/api/documents/{doc['id']}", headers=m_headers).status_code == 404
+    assert _ask(client, m_headers, "How much sabbatical leave do executives get?")["abstained"]
 
-    # 6. Security Check: User B performs search for HR executive leave
-    search_b = client.post("/api/search", json={"query": "executive sabbatical leave golden parachute", "mode": "hybrid"}, headers=headers_user_b)
-    assert search_b.status_code == 200
-    search_b_hits = search_b.json()["results"]
-    for hit in search_b_hits:
-        assert hit["document_id"] != hr_doc_id, "CRITICAL SECURITY BREACH: HR chunk returned in User B search results!"
+    # Switching back to shared without re-adding users keeps it closed.
+    client.put(f"/api/documents/{doc['id']}/access", json={"access_level": "shared", "user_ids": []}, headers=a_headers)
+    assert client.get(f"/api/documents/{doc['id']}", headers=m_headers).status_code == 404
 
-    # 7. Security Check: User B asks in Chat: 'What is the confidential executive leave policy?'
-    chat_b = client.post("/api/chat", json={"message": "What is the confidential executive leave policy?"}, headers=headers_user_b)
-    assert chat_b.status_code == 200
-    msg_b = chat_b.json()["message"]
-    # User B must receive abstention
-    assert "couldn't find sufficient evidence" in msg_b["content"].lower()
-    assert msg_b["abstained"] is True
-    assert msg_b["citations"] == []
-    assert "45 days" not in msg_b["content"]
-    assert "golden parachute" not in msg_b["content"]
 
-    # 8. Contrast: User A asks the same question and gets the verified answer
-    chat_a = client.post("/api/chat", json={"message": "What is the confidential executive leave policy?"}, headers=headers_user_a)
-    assert chat_a.status_code == 200
-    msg_a = chat_a.json()["message"]
-    assert msg_a["abstained"] is False
-    assert len(msg_a["citations"]) >= 1
-    assert "Confidential Executive Leave Policy" in msg_a["citations"][0]["document_title"]
+def test_members_cannot_manage_others_documents(client, admin, member):
+    doc = upload(client, admin[0], "org.txt", "Organization wide note about lunch.", access="organization")
+    m_headers, _ = member
+    assert client.get(f"/api/documents/{doc['id']}", headers=m_headers).json()["can_manage"] is False
+    assert client.delete(f"/api/documents/{doc['id']}", headers=m_headers).status_code == 403
+    r = client.put(f"/api/documents/{doc['id']}/access", json={"access_level": "private"}, headers=m_headers)
+    assert r.status_code == 403
+
+
+def test_conversations_are_private_to_their_owner(client, admin, member):
+    upload(client, admin[0], "org.txt", "The office opens at 9am every weekday.")
+    conv_id = client.post("/api/chat", json={"message": "When does the office open?"}, headers=admin[0]).json()["conversation"]["id"]
+    assert client.get(f"/api/conversations/{conv_id}", headers=member[0]).status_code == 404
+    r = client.post("/api/chat", json={"message": "hi", "conversation_id": conv_id}, headers=member[0])
+    assert r.status_code == 404
+
+
+def test_evaluation_and_admin_endpoints_are_admin_only(client, member):
+    h = member[0]
+    assert client.get("/api/evaluation/latest", headers=h).status_code == 403
+    assert client.post("/api/evaluation/run", headers=h).status_code == 403
+    assert client.post("/api/system/sample-documents", headers=h).status_code == 403

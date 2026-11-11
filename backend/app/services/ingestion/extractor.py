@@ -1,155 +1,164 @@
-import os
+"""Extract text from PDF, DOCX, TXT and Markdown into sections that keep
+their page number and nearest heading."""
 import re
-from typing import List, Dict, Any, Optional
-from pypdf import PdfReader
-import docx
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional
 
-class ExtractedSection:
-    def __init__(self, content: str, page_number: Optional[int] = None, section_title: Optional[str] = None):
-        self.content = content.strip()
-        self.page_number = page_number
-        self.section_title = section_title
+from app.services.text import is_heading
 
-class DocumentExtractor:
-    @staticmethod
-    def extract_text_from_file(file_path: str, file_type: str) -> List[ExtractedSection]:
-        """
-        Extracts structured text units with page numbers and section headings.
-        """
-        file_type = file_type.lower().strip(".")
-        if file_type == "pdf":
-            return DocumentExtractor._extract_pdf(file_path)
-        elif file_type in ["docx", "doc"]:
-            return DocumentExtractor._extract_docx(file_path)
-        elif file_type in ["txt", "md"]:
-            return DocumentExtractor._extract_txt(file_path)
+SUPPORTED_TYPES = {"pdf", "docx", "txt", "md"}
+
+
+class ExtractionError(ValueError):
+    pass
+
+
+@dataclass
+class Section:
+    content: str
+    page_number: Optional[int]
+    heading: Optional[str]
+
+
+def extract(path: Path, file_type: str) -> tuple[List[Section], Optional[int]]:
+    """Return (sections, page_count)."""
+    ft = file_type.lower().lstrip(".")
+    if ft == "pdf":
+        sections, pages = _pdf(path), None
+        pages = max((s.page_number or 0) for s in sections) if sections else 0
+    elif ft == "docx":
+        sections, pages = _docx(path), None
+    elif ft in ("txt", "md"):
+        sections, pages = _text(path.read_text(encoding="utf-8", errors="replace")), None
+    else:
+        raise ExtractionError(f"Unsupported file type '.{ft}'.")
+    sections = [s for s in sections if s.content.strip()]
+    if not sections:
+        raise ExtractionError("No readable text found. Scanned PDFs need OCR before upload.")
+    return sections, pages
+
+
+def _clean_heading(line: str) -> str:
+    return line.strip().lstrip("#").strip().rstrip(":")[:255]
+
+
+def _split_by_headings(lines: List[str], page: Optional[int], heading: Optional[str]) -> tuple[List[Section], Optional[str]]:
+    sections: List[Section] = []
+    buf: List[str] = []
+    for line in lines:
+        if is_heading(line):
+            if buf:
+                sections.append(Section("\n".join(buf), page, heading))
+                buf = []
+            heading = _clean_heading(line)
+        elif line.strip():
+            buf.append(line.strip())
+    if buf:
+        sections.append(Section("\n".join(buf), page, heading))
+    return sections, heading
+
+
+_BULLET_CHARS = set("•▪●◦‣∙·➢➔►–-*")
+
+
+def _strip_bullet(line: str) -> tuple[str, bool]:
+    """Remove a leading bullet marker. PDFs encode bullets as anything from
+    "•" to private-use glyphs or control characters, so match by category.
+    A marker only counts when followed by whitespace ("-5%" is not a bullet)."""
+    s = line.strip()
+    i = 0
+    while i < len(s) and (s[i] in _BULLET_CHARS or unicodedata.category(s[i]) in ("Cc", "Co", "Cf", "So")):
+        i += 1
+    if i == 0 or i == len(s) or not s[i].isspace():
+        return s, False
+    return s[i:].strip(), True
+
+
+def _unwrap_pdf_lines(lines: List[str]) -> List[str]:
+    """PDF text comes back with hard line breaks inside sentences and odd
+    bullet glyphs. Normalise bullets to "• " and re-join wrapped lines."""
+    out: List[str] = []
+    for raw in lines:
+        text, bullet = _strip_bullet(raw)
+        if not text:
+            continue
+        prev = out[-1] if out else None
+        continues = (
+            prev is not None
+            and not bullet
+            and not is_heading(text)
+            and not is_heading(prev)
+            and not prev.rstrip().endswith((".", ":", "!", "?"))
+            # lower-case/symbol continuation, or the previous line ran to full width
+            and (text[0].islower() or text[0] in "(&,;#" or len(prev) >= 90)
+        )
+        if continues:
+            out[-1] = f"{prev} {text}"
         else:
-            raise ValueError(f"Unsupported document format: {file_type}. Supported: PDF, DOCX, TXT.")
+            out.append(f"• {text}" if bullet else text)
+    return out
 
-    @staticmethod
-    def _extract_pdf(file_path: str) -> List[ExtractedSection]:
-        sections: List[ExtractedSection] = []
-        reader = PdfReader(file_path)
-        current_heading = "General"
 
-        for page_idx, page in enumerate(reader.pages):
-            raw_text = page.extract_text() or ""
-            lines = raw_text.splitlines()
-            page_text_blocks = []
+def _pdf(path: Path) -> List[Section]:
+    from pypdf import PdfReader
 
-            for line in lines:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                # Simple heading heuristic: uppercase or short title-like lines
-                if len(stripped) < 60 and (stripped.isupper() or stripped.endswith(":") or stripped.startswith(("#", "SECTION", "POLICY", "ARTICLE"))):
-                    current_heading = stripped.lstrip("#").strip()
-                page_text_blocks.append(stripped)
+    try:
+        reader = PdfReader(str(path))
+    except Exception as exc:
+        raise ExtractionError(f"Couldn't open PDF: {exc}") from exc
+    if reader.is_encrypted:
+        raise ExtractionError("This PDF is password-protected. Remove the password and upload it again.")
+    sections: List[Section] = []
+    heading: Optional[str] = None
+    for i, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        page_sections, heading = _split_by_headings(_unwrap_pdf_lines(text.splitlines()), i, heading)
+        sections.extend(page_sections)
+    return sections
 
-            page_content = "\n".join(page_text_blocks).strip()
-            if page_content:
-                sections.append(
-                    ExtractedSection(
-                        content=page_content,
-                        page_number=page_idx + 1,
-                        section_title=current_heading
-                    )
-                )
 
-        if not sections:
-            raise ValueError("PDF document contains no readable text or is empty/scanned.")
-        return sections
+def _docx(path: Path) -> List[Section]:
+    import docx
 
-    @staticmethod
-    def _extract_docx(file_path: str) -> List[ExtractedSection]:
-        sections: List[ExtractedSection] = []
-        doc = docx.Document(file_path)
-        current_heading = "Overview"
-        current_paragraphs: List[str] = []
-        page_estimate = 1
-        word_count = 0
+    try:
+        document = docx.Document(str(path))
+    except Exception as exc:
+        raise ExtractionError(f"Couldn't open DOCX: {exc}") from exc
+    sections: List[Section] = []
+    heading: Optional[str] = None
+    buf: List[str] = []
 
-        for p in doc.paragraphs:
-            text = p.text.strip()
-            if not text:
-                continue
+    def flush():
+        if buf:
+            sections.append(Section("\n".join(buf), None, heading))
+            buf.clear()
 
-            # Check if paragraph has heading style
-            if p.style and "heading" in p.style.name.lower():
-                if current_paragraphs:
-                    sections.append(
-                        ExtractedSection(
-                            content="\n".join(current_paragraphs),
-                            page_number=page_estimate,
-                            section_title=current_heading
-                        )
-                    )
-                    current_paragraphs = []
-                current_heading = text
-            else:
-                current_paragraphs.append(text)
-                word_count += len(text.split())
-                if word_count > 450:  # ~1 page per 450 words
-                    page_estimate += 1
-                    word_count = 0
+    for p in document.paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        style = (p.style.name if p.style is not None else "").lower()
+        if style.startswith("heading") or style == "title":
+            flush()
+            heading = text[:255]
+        else:
+            buf.append(text)
+    flush()
+    for table in document.tables:
+        rows = [" | ".join(c.text.strip() for c in row.cells) for row in table.rows]
+        if rows:
+            sections.append(Section("\n".join(rows), None, heading))
+    return sections
 
-        if current_paragraphs:
-            sections.append(
-                ExtractedSection(
-                    content="\n".join(current_paragraphs),
-                    page_number=page_estimate,
-                    section_title=current_heading
-                )
-            )
 
-        if not sections:
-            raise ValueError("DOCX document contains no readable text.")
-        return sections
-
-    @staticmethod
-    def _extract_txt(file_path: str) -> List[ExtractedSection]:
-        sections: List[ExtractedSection] = []
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-
-        if not content.strip():
-            raise ValueError("Text document is empty.")
-
-        # Split into sections based on Markdown headers or double line-breaks
-        pattern = r"(^#{1,3}\s+.+$|^[A-Z\s]{4,40}$)"
-        parts = re.split(pattern, content, flags=re.MULTILINE)
-
-        current_heading = "General"
-        page_counter = 1
-        accumulated_text = ""
-
-        for part in parts:
-            stripped = part.strip()
-            if not stripped:
-                continue
-            if re.match(pattern, stripped, flags=re.MULTILINE):
-                if accumulated_text.strip():
-                    sections.append(
-                        ExtractedSection(
-                            content=accumulated_text.strip(),
-                            page_number=page_counter,
-                            section_title=current_heading
-                        )
-                    )
-                    accumulated_text = ""
-                    page_counter += 1
-                current_heading = stripped.lstrip("#").strip()
-            else:
-                accumulated_text += "\n" + stripped
-
-        if accumulated_text.strip():
-            sections.append(
-                ExtractedSection(
-                    content=accumulated_text.strip(),
-                    page_number=page_counter,
-                    section_title=current_heading
-                )
-            )
-
-        return sections if sections else [ExtractedSection(content=content.strip(), page_number=1, section_title="General")]
-
+def _text(content: str) -> List[Section]:
+    # Normalise Windows line endings and form feeds (treated as page breaks).
+    content = content.replace("\r\n", "\n")
+    sections: List[Section] = []
+    heading: Optional[str] = None
+    for page_no, page in enumerate(re.split(r"\f", content), start=1):
+        page_sections, heading = _split_by_headings(page.splitlines(), page_no if "\f" in content else None, heading)
+        sections.extend(page_sections)
+    return sections

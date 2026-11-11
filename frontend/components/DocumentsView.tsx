@@ -1,647 +1,707 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import {
-  Upload,
-  FileText,
-  Trash2,
-  RefreshCw,
-  Eye,
-  Shield,
-  CheckCircle,
-  X,
-  AlertCircle,
-  Lock,
-  Globe,
-  Search,
-  FileUp,
-  Check,
-  Code
-} from "lucide-react";
-import { api } from "@/lib/api";
-import { DocumentItem } from "@/lib/types";
+import { ArrowLeft, Download, FileUp, Lock, RefreshCw, Trash2, Upload, Users } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, api } from "@/lib/api";
+import type { AccessLevel, DirectoryEntry, DocumentDetail, DocumentItem, User } from "@/lib/types";
+import { href, navigate } from "./App";
+import { Button, Dialog, Field, Notice, PageHeader, Spinner, cx, formatBytes, formatDate } from "./ui";
 
-interface DocumentsViewProps {
-  activeUser: { email: string; role: "admin" | "member"; name: string };
-  selectedDocId?: string | null;
+const ACCEPT = ".pdf,.docx,.txt,.md";
+
+const ACCESS_COPY: Record<AccessLevel, { label: string; detail: string }> = {
+  organization: { label: "Everyone", detail: "Anyone in the workspace can search and ask about it." },
+  shared: { label: "Specific people", detail: "Only the people you pick (and admins)." },
+  private: { label: "Only me", detail: "Only you (and admins)." },
+};
+
+export function DocumentsView({
+  user,
+  openId,
+  focusChunk,
+  onChanged,
+}: {
+  user: User;
+  openId?: string;
+  focusChunk?: string;
+  onChanged: () => void;
+}) {
+  if (openId) return <DocumentReader id={openId} focusChunk={focusChunk} user={user} onChanged={onChanged} />;
+  return <DocumentList user={user} onChanged={onChanged} />;
 }
 
-export const DocumentsView: React.FC<DocumentsViewProps> = ({
-  activeUser,
-  selectedDocId,
-}) => {
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchFilter, setSearchFilter] = useState("");
+// ------------------------------------------------------------------- list
+function DocumentList({ user, onChanged }: { user: User; onChanged: () => void }) {
+  const [docs, setDocs] = useState<DocumentItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [accessDoc, setAccessDoc] = useState<DocumentItem | null>(null);
+  const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
+  const [addingSamples, setAddingSamples] = useState(false);
 
-  // Upload modal state
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadTitle, setUploadTitle] = useState("");
-  const [uploadAccess, setUploadAccess] = useState<"organization" | "private" | "shared">("organization");
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const load = useCallback(() => {
+    api
+      .documents()
+      .then((d) => {
+        setDocs(d);
+        setError(null);
+      })
+      .catch((e: ApiError) => setError(e.message));
+  }, []);
 
-  // Preview drawer / modal state
-  const [previewDoc, setPreviewDoc] = useState<any | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [previewTab, setPreviewTab] = useState<"chunks" | "json">("chunks");
-  const [chunkSearch, setChunkSearch] = useState("");
+  useEffect(load, [load]);
 
-  // Permission edit modal
-  const [permDoc, setPermDoc] = useState<DocumentItem | null>(null);
-  const [editAccessLevel, setEditAccessLevel] = useState<string>("organization");
-  const [savingPerm, setSavingPerm] = useState(false);
-
-  // Delete confirmation modal
-  const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const fetchDocs = async () => {
-    try {
-      setLoading(true);
-      const docs = await api.getDocuments();
-      setDocuments(docs);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Poll while anything is still being indexed.
+  const processing = docs?.some((d) => d.status === "processing");
   useEffect(() => {
-    fetchDocs();
-  }, [activeUser]);
-
+    if (!processing) return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [processing, load]);
   useEffect(() => {
-    if (selectedDocId) {
-      handleInspect(selectedDocId);
-    }
-  }, [selectedDocId]);
+    if (docs && !processing) onChanged();
+  }, [processing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleInspect = async (docId: string) => {
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return (docs || []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.filename.toLowerCase().includes(q));
+  }, [docs, filter]);
+
+  const reprocess = async (d: DocumentItem) => {
     try {
-      setLoadingPreview(true);
-      const preview = await api.getDocumentPreview(docId);
-      setPreviewDoc(preview);
-    } catch (err) {
-      console.error(err);
+      await api.reprocess(d.id);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't reprocess the document.");
+    }
+  };
+
+  const addSamples = async () => {
+    setAddingSamples(true);
+    try {
+      const r = await api.addSamples();
+      if (r.added.length === 0) setError("The sample documents are already in the workspace.");
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't add the sample documents.");
     } finally {
-      setLoadingPreview(false);
+      setAddingSamples(false);
     }
   };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setUploadFiles(Array.from(e.dataTransfer.files));
-    }
-  };
-
-  const handleUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (uploadFiles.length === 0) return;
-
-    setUploading(true);
-    setUploadError(null);
-
-    try {
-      for (const file of uploadFiles) {
-        const formData = new FormData();
-        formData.append("file", file);
-        if (uploadTitle) formData.append("title", uploadTitle);
-        formData.append("access_level", uploadAccess);
-
-        await api.uploadDocument(formData);
-      }
-      setShowUploadModal(false);
-      setUploadFiles([]);
-      setUploadTitle("");
-      await fetchDocs();
-    } catch (err: any) {
-      setUploadError(err.message || "Document ingestion failed.");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteDocId) return;
-    try {
-      setDeleting(true);
-      await api.deleteDocument(deleteDocId);
-      setDocuments((prev) => prev.filter((d) => d.id !== deleteDocId));
-      setDeleteDocId(null);
-    } catch (err: any) {
-      alert(err.message || "Failed to delete document.");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleRetry = async (docId: string) => {
-    try {
-      await api.retryDocument(docId);
-      await fetchDocs();
-    } catch (err: any) {
-      alert(err.message || "Reprocessing failed.");
-    }
-  };
-
-  const handleSavePermissions = async () => {
-    if (!permDoc) return;
-    try {
-      setSavingPerm(true);
-      await api.updatePermissions(permDoc.id, editAccessLevel);
-      setPermDoc(null);
-      await fetchDocs();
-    } catch (err: any) {
-      alert(err.message || "Failed to update permissions.");
-    } finally {
-      setSavingPerm(false);
-    }
-  };
-
-  const filteredDocs = documents.filter((d) =>
-    d.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
-    d.access_level.toLowerCase().includes(searchFilter.toLowerCase()) ||
-    d.file_type.toLowerCase().includes(searchFilter.toLowerCase())
-  );
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 bg-slate-50 font-sans">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-slate-200">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
-            <span>Document Vault</span>
-            <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-200 text-slate-700">
-              {documents.length} Authorized
-            </span>
-          </h1>
-          <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-            Manage organizational documents, inspect extracted token chunks, and configure document permissions.
-          </p>
-        </div>
-
-        <div>
-          {activeUser.role === "admin" && (
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Upload Document</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Filter / Search Bar */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
-          <input
-            type="text"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder="Filter authorized documents by title, policy, or extension..."
-            className="w-full bg-white border border-slate-200 focus:border-blue-600 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none transition-all shadow-xs"
-          />
-        </div>
-
-        <div className="text-xs text-slate-500">
-          Identity Clearance: <span className="text-blue-700 font-semibold capitalize">{activeUser.role}</span>
-        </div>
-      </div>
-
-      {/* Documents Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase text-slate-500 tracking-wider">
-                <th className="p-3.5 px-5">Document Title</th>
-                <th className="p-3.5">Type</th>
-                <th className="p-3.5">File Size</th>
-                <th className="p-3.5">Access Policy</th>
-                <th className="p-3.5">Status</th>
-                <th className="p-3.5 px-5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="p-10 text-center text-slate-400">
-                    Loading documents for {activeUser.role}...
-                  </td>
-                </tr>
-              ) : filteredDocs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-10 text-center text-slate-500 space-y-1">
-                    <p className="font-semibold text-slate-700">No documents found matching filter.</p>
-                    <p className="text-xs text-slate-400">
-                      {activeUser.role === "member"
-                        ? "Note: Member role is restricted from private executive documents."
-                        : "Upload documents or click 'Reset Seed Data' in the sidebar."}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredDocs.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-slate-50/70 transition-colors group">
-                    <td className="p-3.5 px-5 font-medium text-slate-900 max-w-sm truncate">
-                      <div className="flex items-center gap-2.5">
-                        <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                        <span className="truncate font-semibold text-xs group-hover:text-blue-600 transition-colors">
-                          {doc.title}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-3.5 uppercase font-mono text-[11px] text-slate-500">
-                      {doc.file_type}
-                    </td>
-                    <td className="p-3.5 text-slate-500 font-mono">
-                      {(doc.file_size / 1024).toFixed(1)} KB
-                    </td>
-                    <td className="p-3.5">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase ${
-                          doc.access_level === "private"
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-emerald-100 text-emerald-800"
-                        }`}
-                      >
-                        {doc.access_level === "private" ? (
-                          <Lock className="w-3 h-3" />
-                        ) : (
-                          <Globe className="w-3 h-3" />
-                        )}
-                        <span>{doc.access_level}</span>
-                      </span>
-                    </td>
-                    <td className="p-3.5">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase ${
-                          doc.status === "indexed"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : doc.status === "processing"
-                            ? "bg-blue-100 text-blue-800 animate-pulse"
-                            : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {doc.status === "indexed" && <Check className="w-3 h-3" />}
-                        <span>{doc.status}</span>
-                      </span>
-                    </td>
-                    <td className="p-3.5 px-5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => handleInspect(doc.id)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
-                          title="Inspect Extracted Chunks"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-
-                        {activeUser.role === "admin" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setPermDoc(doc);
-                                setEditAccessLevel(doc.access_level);
-                              }}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-amber-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                              title="Configure Access Policy"
-                            >
-                              <Shield className="w-4 h-4" />
-                            </button>
-
-                            {doc.status === "failed" && (
-                              <button
-                                onClick={() => handleRetry(doc.id)}
-                                className="p-1.5 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                title="Retry Ingestion"
-                              >
-                                <RefreshCw className="w-4 h-4" />
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => setDeleteDocId(doc.id)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                              title="Delete Document"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Drag & Drop Upload Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-xl font-sans">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Upload Enterprise Document</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Supported formats: PDF, DOCX, TXT (Max 25MB)
-                </p>
-              </div>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {uploadError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{uploadError}</span>
-              </div>
+    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 sm:py-12">
+      <PageHeader
+        title="Documents"
+        description="Everything here can be searched and asked about by the people it's shared with. Text is extracted from PDF, Word, text and Markdown files."
+        actions={
+          <>
+            {user.role === "admin" && docs !== null && !docs.some((d) => d.is_sample) && (
+              <Button onClick={addSamples} busy={addingSamples}>
+                Add sample documents
+              </Button>
             )}
+            <Button variant="primary" onClick={() => setUploadOpen(true)}>
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
+          </>
+        }
+      />
 
-            <form onSubmit={handleUploadSubmit} className="space-y-4">
-              {/* Drag and Drop Zone */}
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-                  isDragging
-                    ? "border-blue-600 bg-blue-50"
-                    : "border-slate-200 hover:border-blue-400 bg-slate-50"
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx,.txt,.md"
-                  onChange={(e) => e.target.files && setUploadFiles(Array.from(e.target.files))}
-                  className="hidden"
-                />
-                <FileUp className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-                {uploadFiles.length > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold text-slate-800">
-                      {uploadFiles.length} file(s) selected:
-                    </p>
-                    <p className="text-xs text-blue-700 truncate font-mono">
-                      {uploadFiles.map((f) => f.name).join(", ")}
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-800">
-                      Drag & drop your files here, or <span className="text-blue-600">browse</span>
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Text, page numbers, and structural headings are preserved automatically
-                    </p>
-                  </div>
-                )}
-              </div>
+      {error && (
+        <Notice tone="error" className="mt-5">
+          {error}
+        </Notice>
+      )}
 
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Document Title (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={uploadTitle}
-                  onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder="e.g. Q3 Security Compliance Policy"
-                  className="w-full bg-white border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Access Policy Enforcement
-                </label>
-                <select
-                  value={uploadAccess}
-                  onChange={(e) => setUploadAccess(e.target.value as any)}
-                  className="w-full bg-white border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none"
-                >
-                  <option value="organization">Organization (All Authenticated Members)</option>
-                  <option value="private">Private (Restricted to Owner/Admin Only)</option>
-                  <option value="shared">Shared (Delegated User Access)</option>
-                </select>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-800 text-xs font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={uploading || uploadFiles.length === 0}
-                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs disabled:opacity-40 cursor-pointer"
-                >
-                  {uploading ? "Ingesting..." : "Ingest Document"}
-                </button>
-              </div>
-            </form>
-          </div>
+      {docs === null && !error && (
+        <div className="mt-12 flex justify-center text-graphite">
+          <Spinner />
         </div>
       )}
 
-      {/* Document Chunks Inspection Modal */}
-      {previewDoc && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-xl font-sans">
-            {/* Header */}
-            <div className="p-4 px-6 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-blue-600" />
-                  <span>{previewDoc.title}</span>
-                </h3>
-                <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-3">
-                  <span>Partitions: {previewDoc.total_chunks} Chunks</span>
-                  <span>•</span>
-                  <span>Access: <span className="uppercase text-blue-700 font-semibold">{previewDoc.access_level}</span></span>
+      {docs && docs.length === 0 && (
+        <button
+          type="button"
+          onClick={() => setUploadOpen(true)}
+          className="mt-8 flex w-full flex-col items-center rounded-lg border border-dashed border-rule px-6 py-14 text-center hover:border-teal"
+        >
+          <FileUp className="h-6 w-6 text-teal" />
+          <span className="mt-3 font-medium">Upload your first document</span>
+          <span className="mt-1 text-sm text-graphite">PDF, DOCX, TXT or Markdown, up to 25 MB each</span>
+        </button>
+      )}
+
+      {docs && docs.length > 0 && (
+        <>
+          <div className="mt-6">
+            <label htmlFor="doc-filter" className="sr-only">
+              Filter documents
+            </label>
+            <input
+              id="doc-filter"
+              className="field max-w-xs"
+              placeholder="Filter by title"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+          <ul className="mt-4 divide-y divide-rule border-y border-rule">
+            {shown.map((d) => (
+              <li key={d.id} className="flex flex-col gap-2 py-3.5 sm:flex-row sm:items-center sm:gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2.5">
+                    <a href={href({ view: "documents", id: d.id })} className="truncate font-medium hover:text-teal">
+                      {d.title}
+                    </a>
+                    {d.is_sample && <span className="text-xs text-faint">Sample</span>}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-sm text-graphite">
+                    <span className="uppercase tracking-wide text-faint">{d.file_type}</span>
+                    <span>{formatBytes(d.file_size)}</span>
+                    <span>{d.owner_id === user.id ? "Added by you" : `Added by ${d.owner_name || "someone"}`}</span>
+                    <span>{formatDate(d.created_at)}</span>
+                  </div>
+                  {d.status === "failed" && <p className="mt-1 text-sm text-danger">{d.error_message || "Indexing failed."}</p>}
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPreviewDoc(null)}
-                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Content Body */}
-            <div className="p-5 overflow-y-auto space-y-3.5 flex-1 bg-slate-50">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
-                <input
-                  type="text"
-                  value={chunkSearch}
-                  onChange={(e) => setChunkSearch(e.target.value)}
-                  placeholder="Search within extracted chunks..."
-                  className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600"
-                />
-              </div>
-
-              <div className="space-y-2.5">
-                {previewDoc.chunks
-                  ?.filter((c: any) =>
-                    !chunkSearch ||
-                    c.content.toLowerCase().includes(chunkSearch.toLowerCase()) ||
-                    (c.section_title && c.section_title.toLowerCase().includes(chunkSearch.toLowerCase()))
-                  )
-                  .map((chunk: any) => (
-                    <div
-                      key={chunk.id}
-                      className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1.5 text-xs shadow-xs"
-                    >
-                      <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                        <span className="text-blue-700 font-semibold">
-                          Chunk #{chunk.chunk_index + 1} (Page {chunk.page_number || "1"})
-                        </span>
-                        {chunk.section_title && (
-                          <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px]">
-                            {chunk.section_title}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-slate-700 leading-relaxed font-sans">{chunk.content}</p>
+                <div className="flex shrink-0 items-center gap-3">
+                  <StatusLabel doc={d} />
+                  <AccessLabel doc={d} onClick={d.can_manage ? () => setAccessDoc(d) : undefined} />
+                  {d.can_manage && (
+                    <div className="flex">
+                      {d.status === "failed" && (
+                        <Button size="sm" variant="ghost" onClick={() => reprocess(d)} aria-label={`Reprocess ${d.title}`}>
+                          <RefreshCw className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => setDeleteDoc(d)} aria-label={`Delete ${d.title}`}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                  ))}
-              </div>
-            </div>
-          </div>
-        </div>
+                  )}
+                </div>
+              </li>
+            ))}
+            {shown.length === 0 && <li className="py-6 text-sm text-graphite">No documents match “{filter}”.</li>}
+          </ul>
+        </>
       )}
 
-      {/* Permission Edit Modal */}
-      {permDoc && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl font-sans">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Shield className="w-4 h-4 text-amber-600" />
-                <span>Configure Document Policy</span>
-              </h3>
-              <button onClick={() => setPermDoc(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="text-xs text-slate-600">
-              Configuring access rules for: <br />
-              <span className="font-semibold text-slate-900 mt-1 block font-mono text-xs">{permDoc.title}</span>
-            </div>
-
-            <div className="space-y-3">
-              <label className="block text-xs font-medium text-slate-700">
-                Access Level
-              </label>
-              <select
-                value={editAccessLevel}
-                onChange={(e) => setEditAccessLevel(e.target.value)}
-                className="w-full bg-white border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none"
-              >
-                <option value="organization">Organization (All Members Can Access)</option>
-                <option value="private">Private (Restricted to Admins Only)</option>
-                <option value="shared">Shared (Delegated User Access)</option>
-              </select>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Server-side SQL filters ensure unauthorized users can never retrieve this document or its vector chunks.
-              </p>
-            </div>
-
-            <div className="pt-2 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPermDoc(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSavePermissions}
-                disabled={savingPerm}
-                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
-              >
-                {savingPerm ? "Updating..." : "Save Policy"}
-              </button>
-            </div>
-          </div>
-        </div>
+      <UploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} user={user} onUploaded={load} />
+      {accessDoc && (
+        <AccessDialog
+          doc={accessDoc}
+          user={user}
+          onClose={() => setAccessDoc(null)}
+          onSaved={() => {
+            setAccessDoc(null);
+            load();
+          }}
+        />
       )}
-
-      {/* Delete Confirmation Modal */}
-      {deleteDocId && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white border border-red-200 rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-xl font-sans">
-            <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600 mx-auto">
-              <Trash2 className="w-5 h-5" />
-            </div>
-
-            <div className="text-center space-y-1">
-              <h3 className="text-sm font-bold text-slate-900">Delete Document</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Are you sure you want to remove this document and all its indexed vector chunks from the knowledge base?
-              </p>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setDeleteDocId(null)}
-                className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDelete}
-                disabled={deleting}
-                className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                {deleting ? "Deleting..." : "Confirm Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteDialog
+        doc={deleteDoc}
+        onClose={() => setDeleteDoc(null)}
+        onDeleted={() => {
+          setDeleteDoc(null);
+          load();
+          onChanged();
+        }}
+      />
     </div>
   );
-};
+}
+
+function StatusLabel({ doc }: { doc: DocumentItem }) {
+  if (doc.status === "processing")
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-graphite">
+        <Spinner className="h-3 w-3" /> Indexing
+      </span>
+    );
+  if (doc.status === "failed") return <span className="text-sm font-medium text-danger">Failed</span>;
+  return <span className="text-sm text-graphite">{doc.chunk_count} passages</span>;
+}
+
+function AccessLabel({ doc, onClick }: { doc: DocumentItem; onClick?: () => void }) {
+  const Icon = doc.access_level === "organization" ? Users : Lock;
+  const label =
+    doc.access_level === "shared" && doc.can_manage
+      ? `${doc.shared_with.length} ${doc.shared_with.length === 1 ? "person" : "people"}`
+      : ACCESS_COPY[doc.access_level].label;
+  const content = (
+    <>
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </>
+  );
+  const cls = "inline-flex min-w-[7.5rem] items-center gap-1.5 rounded px-2 py-1 text-sm text-graphite";
+  return onClick ? (
+    <button type="button" onClick={onClick} className={cx(cls, "hover:bg-sunk hover:text-ink")} title="Change who can access this">
+      {content}
+    </button>
+  ) : (
+    <span className={cls}>{content}</span>
+  );
+}
+
+// ---------------------------------------------------------------- dialogs
+function AccessPicker({
+  user,
+  level,
+  onLevel,
+  selected,
+  onSelected,
+}: {
+  user: User;
+  level: AccessLevel;
+  onLevel: (l: AccessLevel) => void;
+  selected: string[];
+  onSelected: (ids: string[]) => void;
+}) {
+  const [people, setPeople] = useState<DirectoryEntry[] | null>(null);
+  useEffect(() => {
+    if (level === "shared" && people === null) api.directory().then(setPeople).catch(() => setPeople([]));
+  }, [level, people]);
+
+  return (
+    <fieldset>
+      <legend className="mb-1.5 text-sm font-medium">Who can access it</legend>
+      <div className="space-y-1">
+        {(Object.keys(ACCESS_COPY) as AccessLevel[]).map((l) => (
+          <label
+            key={l}
+            className={cx(
+              "flex cursor-pointer gap-3 rounded border px-3 py-2",
+              level === l ? "border-teal bg-teal-wash" : "border-rule hover:bg-sunk",
+            )}
+          >
+            <input type="radio" name="access" className="mt-1 accent-[var(--teal)]" checked={level === l} onChange={() => onLevel(l)} />
+            <span>
+              <span className="block text-sm font-medium">{ACCESS_COPY[l].label}</span>
+              <span className="block text-sm text-graphite">{ACCESS_COPY[l].detail}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {level === "shared" && (
+        <div className="mt-3 rounded border border-rule">
+          {people === null && (
+            <div className="flex justify-center p-4 text-graphite">
+              <Spinner />
+            </div>
+          )}
+          {people && people.filter((p) => p.id !== user.id).length === 0 && (
+            <p className="p-3 text-sm text-graphite">There's no one else in the workspace yet.</p>
+          )}
+          <ul className="max-h-48 overflow-y-auto scroll-thin">
+            {people
+              ?.filter((p) => p.id !== user.id)
+              .map((p) => (
+                <li key={p.id}>
+                  <label className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-sunk">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--teal)]"
+                      checked={selected.includes(p.id)}
+                      onChange={(e) => onSelected(e.target.checked ? [...selected, p.id] : selected.filter((x) => x !== p.id))}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm">{p.full_name}</span>
+                      <span className="block truncate text-xs text-graphite">{p.email}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
+function UploadDialog({ open, onClose, user, onUploaded }: { open: boolean; onClose: () => void; user: User; onUploaded: () => void }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [title, setTitle] = useState("");
+  const [level, setLevel] = useState<AccessLevel>("organization");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setFiles([]);
+    setTitle("");
+    setLevel("organization");
+    setSelected([]);
+    setErrors([]);
+  };
+  const close = () => {
+    if (busy) return;
+    reset();
+    onClose();
+  };
+
+  const submit = async () => {
+    setBusy(true);
+    const failed: string[] = [];
+    for (const f of files) {
+      try {
+        await api.upload(f, {
+          title: files.length === 1 ? title.trim() || undefined : undefined,
+          access_level: level,
+          user_ids: level === "shared" ? selected : [],
+        });
+      } catch (e) {
+        failed.push(`${f.name}: ${e instanceof ApiError ? e.message : "upload failed"}`);
+      }
+    }
+    setBusy(false);
+    onUploaded();
+    if (failed.length) {
+      setErrors(failed);
+      setFiles(files.filter((f) => failed.some((m) => m.startsWith(f.name + ":"))));
+    } else {
+      reset();
+      onClose();
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title="Upload documents"
+      onClose={close}
+      width="max-w-lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={close} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} busy={busy} disabled={!files.length || (level === "shared" && !selected.length)}>
+            {files.length > 1 ? `Upload ${files.length} files` : "Upload"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            setFiles(Array.from(e.dataTransfer.files));
+          }}
+          className={cx("rounded-md border border-dashed px-4 py-6 text-center", dragging ? "border-teal bg-teal-wash" : "border-rule")}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            className="sr-only"
+            onChange={(e) => setFiles(Array.from(e.target.files || []))}
+          />
+          {files.length === 0 ? (
+            <>
+              <p className="text-sm">Drop files here, or</p>
+              <Button size="sm" className="mt-2" onClick={() => inputRef.current?.click()}>
+                Choose files
+              </Button>
+              <p className="mt-2 text-xs text-graphite">PDF, DOCX, TXT or Markdown, up to 25 MB each</p>
+            </>
+          ) : (
+            <>
+              <ul className="space-y-1 text-left text-sm">
+                {files.map((f) => (
+                  <li key={f.name} className="flex justify-between gap-3">
+                    <span className="truncate">{f.name}</span>
+                    <span className="shrink-0 text-graphite">{formatBytes(f.size)}</span>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="mt-3 text-sm text-teal hover:underline" onClick={() => inputRef.current?.click()}>
+                Choose different files
+              </button>
+            </>
+          )}
+        </div>
+
+        {files.length === 1 && (
+          <Field label="Title" hint="Optional. Defaults to the file name.">
+            <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+        )}
+
+        <AccessPicker user={user} level={level} onLevel={setLevel} selected={selected} onSelected={setSelected} />
+
+        {errors.length > 0 && (
+          <Notice tone="error">
+            <ul className="space-y-0.5">
+              {errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          </Notice>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+function AccessDialog({ doc, user, onClose, onSaved }: { doc: DocumentItem; user: User; onClose: () => void; onSaved: () => void }) {
+  const [level, setLevel] = useState<AccessLevel>(doc.access_level);
+  const [selected, setSelected] = useState<string[]>(doc.shared_with);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.setAccess(doc.id, level, level === "shared" ? selected : []);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't save access.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      title={`Access to “${doc.title}”`}
+      onClose={onClose}
+      width="max-w-lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={save} busy={busy} disabled={level === "shared" && !selected.length}>
+            Save access
+          </Button>
+        </>
+      }
+    >
+      <AccessPicker user={user} level={level} onLevel={setLevel} selected={selected} onSelected={setSelected} />
+      {error && <Notice tone="error" className="mt-4">{error}</Notice>}
+    </Dialog>
+  );
+}
+
+function DeleteDialog({ doc, onClose, onDeleted }: { doc: DocumentItem | null; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!doc) return null;
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await api.deleteDocument(doc.id);
+      setBusy(false);
+      onDeleted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't delete the document.");
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open
+      title="Delete document"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={confirm} busy={busy}>
+            Delete document
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm">
+        “{doc.title}” will be removed for everyone and can no longer be used in answers. Past answers that cite it keep their
+        quoted text.
+      </p>
+      {error && <Notice tone="error" className="mt-4">{error}</Notice>}
+    </Dialog>
+  );
+}
+
+// ----------------------------------------------------------------- reader
+function DocumentReader({ id, focusChunk, user, onChanged }: { id: string; focusChunk?: string; user: User; onChanged: () => void }) {
+  const [doc, setDoc] = useState<DocumentDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const load = useCallback(() => {
+    api
+      .document(id)
+      .then(setDoc)
+      .catch((e: ApiError) => setError(e.status === 404 ? "This document doesn't exist or you don't have access to it." : e.message));
+  }, [id]);
+  useEffect(load, [load]);
+
+  useEffect(() => {
+    if (doc?.status !== "processing") return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [doc?.status, load]);
+
+  useEffect(() => {
+    if (doc && focusChunk) document.getElementById(`chunk-${focusChunk}`)?.scrollIntoView({ block: "center" });
+  }, [doc, focusChunk]);
+
+  const back = (
+    <a href={href({ view: "documents" })} className="inline-flex items-center gap-1.5 text-sm text-graphite hover:text-ink">
+      <ArrowLeft className="h-4 w-4" /> All documents
+    </a>
+  );
+
+  if (error)
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-8">
+        {back}
+        <Notice tone="error" className="mt-6">
+          {error}
+        </Notice>
+      </div>
+    );
+  if (!doc)
+    return (
+      <div className="flex justify-center py-20 text-graphite">
+        <Spinner />
+      </div>
+    );
+
+  // Group consecutive chunks under their section heading, hiding the overlap
+  // that indexing repeats between neighbouring chunks.
+  const groups: { title: string | null; page: number | null; chunks: (DocumentDetail["chunks"][number] & { text: string })[] }[] = [];
+  doc.chunks.forEach((c, i) => {
+    const prev = doc.chunks[i - 1];
+    const text = prev && prev.section_title === c.section_title ? trimOverlap(prev.content, c.content) : c.content;
+    const last = groups[groups.length - 1];
+    if (last && last.title === c.section_title) last.chunks.push({ ...c, text });
+    else groups.push({ title: c.section_title, page: c.page_number, chunks: [{ ...c, text }] });
+  });
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-8 sm:py-10">
+      {back}
+      <header className="mt-5 border-b border-rule pb-5">
+        <h1 className="text-2xl font-semibold tracking-tight">{doc.title}</h1>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-graphite">
+          <span>{doc.filename}</span>
+          <span>{formatBytes(doc.file_size)}</span>
+          {doc.page_count ? <span>{doc.page_count} pages</span> : null}
+          <span>{doc.owner_id === user.id ? "Added by you" : `Added by ${doc.owner_name}`}</span>
+          <span>{ACCESS_COPY[doc.access_level].label}</span>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => api.downloadDocument(doc).catch((e) => setError(e.message))}>
+            <Download className="h-4 w-4" /> Download original
+          </Button>
+          {doc.can_manage && (
+            <>
+              <Button size="sm" onClick={() => setAccessOpen(true)}>
+                <Users className="h-4 w-4" /> Change access
+              </Button>
+              <Button
+                size="sm"
+                disabled={doc.status === "processing"}
+                title="Extract and index the text again"
+                onClick={() =>
+                  api
+                    .reprocess(doc.id)
+                    .then(load)
+                    .catch((e) => setError(e.message))
+                }
+              >
+                <RefreshCw className="h-4 w-4" /> Reprocess
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setDeleteOpen(true)}>
+                <Trash2 className="h-4 w-4" /> Delete
+              </Button>
+            </>
+          )}
+        </div>
+      </header>
+
+      {doc.status === "processing" && (
+        <Notice className="mt-6">
+          <span className="inline-flex items-center gap-2">
+            <Spinner className="h-3 w-3" /> Extracting and indexing text. This page updates when it's done.
+          </span>
+        </Notice>
+      )}
+      {doc.status === "failed" && (
+        <Notice tone="error" className="mt-6">
+          {doc.error_message || "Indexing failed."}
+        </Notice>
+      )}
+
+      <div className="mt-6 space-y-8">
+        {groups.map((g, gi) => (
+          <section key={gi}>
+            {(g.title || g.page) && (
+              <h2 className="mb-2 flex items-baseline justify-between gap-4 text-sm font-semibold">
+                <span>{g.title}</span>
+                {g.page ? <span className="font-normal text-faint">Page {g.page}</span> : null}
+              </h2>
+            )}
+            {g.chunks.map((c) => (
+              <p
+                key={c.id}
+                id={`chunk-${c.id}`}
+                className={cx(
+                  "whitespace-pre-line rounded font-serif text-lg leading-relaxed",
+                  c.id === focusChunk ? "-mx-2 bg-marker px-2 py-1 text-ink" : "text-ink",
+                )}
+              >
+                {c.text}
+              </p>
+            ))}
+          </section>
+        ))}
+      </div>
+
+      {accessOpen && (
+        <AccessDialog
+          doc={doc}
+          user={user}
+          onClose={() => setAccessOpen(false)}
+          onSaved={() => {
+            setAccessOpen(false);
+            load();
+          }}
+        />
+      )}
+      <DeleteDialog
+        doc={deleteOpen ? doc : null}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={() => {
+          onChanged();
+          navigate({ view: "documents" });
+        }}
+      />
+    </div>
+  );
+}
+
+function trimOverlap(prev: string, cur: string): string {
+  const a = prev.split(/\s+/);
+  const b = cur.split(/\s+/);
+  for (let n = Math.min(a.length, b.length, 200); n >= 4; n--) {
+    if (a.slice(-n).join(" ") === b.slice(0, n).join(" ")) return b.slice(n).join(" ");
+  }
+  return cur;
+}

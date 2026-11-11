@@ -1,15 +1,25 @@
 services:
   - type: web
     name: enterprise-brain-backend
-    env: python
+    runtime: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: production
-      - key: ALLOW_DEMO_AUTH
-        value: "true"
-      - key: SQLITE_FALLBACK_URL
-        value: sqlite:///./enterprise_brain.db
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: enterprise-brain-db
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: BACKEND_CORS_ORIGINS
+        sync: false # e.g. https://your-frontend.vercel.app (only if the frontend calls the API directly)
 
+databases:
+  - name: enterprise-brain-db
+    databaseName: enterprise_brain

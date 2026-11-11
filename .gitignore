@@ -1,43 +1,32 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-# Python virtual environments
-env/
-venv/
 .venv/
+venv/
 .pytest_cache/
-.coverage
-htmlcov/
 
-# Next.js / Node
+# Node / Next.js
 node_modules/
 .next/
 out/
-build/
-dist/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
 
-# Database & Uploads
+# Local data (database, uploaded files)
+backend/data/
 *.db
-*.sqlite3
+*.db-wal
+*.db-shm
 uploads/
-!uploads/.gitkeep
 
-# Environment & Secrets
+# Secrets
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-*.log
+.env.*
+!.env.example
 
-# OS
+# OS / logs
 .DS_Store
 Thumbs.db
+*.log
+evaluation/results.json
 
+# Data from the pre-2.0 version (safe to delete)
+_old_data/

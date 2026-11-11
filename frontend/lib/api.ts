@@ -1,177 +1,159 @@
-import { User, DocumentItem, ConversationItem, MessageItem, SearchResultItem, EvaluationMetricReport } from "./types";
+import type {
+  AccessLevel,
+  ChatResponse,
+  Conversation,
+  ConversationSummary,
+  DirectoryEntry,
+  DocumentDetail,
+  DocumentItem,
+  EvaluationRun,
+  PublicInfo,
+  Role,
+  SearchMode,
+  SearchResponse,
+  SystemStatus,
+  TokenResponse,
+  User,
+} from "./types";
 
-const REMOTE_BACKEND = "https://enterprise-brain-k03n.onrender.com/api";
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1"
-    ? REMOTE_BACKEND
-    : "/api");
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
+const TOKEN_KEY = "eb.token";
 
-export interface ActiveUserSession {
-  email: string;
-  role: "admin" | "member";
-  name: string;
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
 }
 
-export const DEFAULT_USER: ActiveUserSession = {
-  email: "sarah_chen@enterprise.com",
-  role: "admin",
-  name: "Sarah Chen (Admin)",
+function readToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export const session = {
+  get token() {
+    return readToken();
+  },
+  set(token: string) {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      /* storage unavailable: session lasts for this page only */
+    }
+  },
+  clear() {
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* ignore */
+    }
+  },
 };
 
-let activeUser: ActiveUserSession = DEFAULT_USER;
+/** Fired when the server rejects our token, so the app can show sign-in. */
+export const SESSION_EXPIRED_EVENT = "eb:session-expired";
 
-export function setActiveUser(user: ActiveUserSession) {
-  activeUser = user;
-  if (typeof window !== "undefined") {
-    localStorage.setItem("enterprise_brain_user", JSON.stringify(user));
-  }
-}
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  const token = readToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
 
-export function getActiveUser() {
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("enterprise_brain_user");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.email) {
-          activeUser = parsed;
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-  }
-  return activeUser;
-}
-
-export function getGeminiApiKey(): string {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("enterprise_brain_gemini_key") || "";
-  }
-  return "";
-}
-
-export function setGeminiApiKey(key: string) {
-  if (typeof window !== "undefined") {
-    if (key && key.trim()) {
-      localStorage.setItem("enterprise_brain_gemini_key", key.trim());
-    } else {
-      localStorage.removeItem("enterprise_brain_gemini_key");
-    }
-  }
-}
-
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const current = getActiveUser();
-  const headers = new Headers(options.headers || {});
-
-  headers.set("X-User-Email", current.email);
-  headers.set("X-User-Role", current.role);
-  headers.set("X-User-Name", current.name);
-
-  const geminiKey = getGeminiApiKey();
-  if (geminiKey) {
-    headers.set("X-Gemini-API-Key", geminiKey);
-  }
-
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  let response: Response;
+  let res: Response;
   try {
-    response = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      headers,
-    });
-  } catch (err: any) {
-    throw new Error(
-      `Cannot connect to backend server at ${API_BASE}. Please make sure the backend is running with 'python -m uvicorn app.main:app --port 8000'.`
-    );
-  }
-
-  const text = await response.text();
-  let data: any;
-  try {
-    data = JSON.parse(text);
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
-    data = { detail: text || `Request failed with status ${response.status}` };
+    throw new ApiError(0, "Can't reach the server. Check that the backend is running, then try again.");
   }
 
-  if (!response.ok) {
-    let errorDetail = data.detail || data.error || `Request failed with status ${response.status}`;
-    if (Array.isArray(errorDetail)) {
-      errorDetail = errorDetail.map((e: any) => e.msg || JSON.stringify(e)).join(", ");
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  let body: any = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    if (res.status === 401 && token) {
+      session.clear();
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
     }
-    throw new Error(errorDetail);
+    const detail = typeof body?.detail === "string" ? body.detail : null;
+    // A 5xx without our JSON error body comes from the proxy, not the API:
+    // the backend is down, restarting, or took too long to respond.
+    const fallback =
+      res.status >= 500
+        ? body === null
+          ? "The backend didn't respond. Check that it's running (and its terminal for errors), then try again."
+          : "The server hit an error. Try again in a moment."
+        : `Request failed (${res.status}).`;
+    throw new ApiError(res.status, detail || fallback);
   }
-
-  return data as T;
+  return body as T;
 }
+
+const json = (method: string, data?: unknown): RequestInit => ({
+  method,
+  body: data === undefined ? undefined : JSON.stringify(data),
+});
 
 export const api = {
-  // Auth
-  getCurrentUser: () => request<User>("/auth/me"),
-  getOrgUsers: () => request<User[]>("/auth/users"),
+  info: () => request<PublicInfo>("/system/info"),
+  status: () => request<SystemStatus>("/system/status"),
 
-  // Documents
-  getDocuments: () => request<DocumentItem[]>("/documents"),
-  getDocument: (id: string) => request<DocumentItem>(`/documents/${id}`),
-  getDocumentPreview: (id: string) => request<any>(`/documents/${id}/preview`),
-  uploadDocument: (formData: FormData) =>
-    request<DocumentItem>("/documents/upload", {
-      method: "POST",
-      body: formData,
-    }),
-  deleteDocument: (id: string) =>
-    request<{ success: boolean; message: string }>(`/documents/${id}`, {
-      method: "DELETE",
-    }),
-  retryDocument: (id: string) =>
-    request<DocumentItem>(`/documents/${id}/retry`, {
-      method: "POST",
-    }),
-  updatePermissions: (id: string, accessLevel: string, userIds?: string[]) =>
-    request<{ success: boolean; message: string }>(`/documents/${id}/permissions`, {
-      method: "PUT",
-      body: JSON.stringify({ access_level: accessLevel, user_ids: userIds || [] }),
-    }),
+  login: (email: string, password: string) => request<TokenResponse>("/auth/login", json("POST", { email, password })),
+  register: (email: string, full_name: string, password: string) =>
+    request<TokenResponse>("/auth/register", json("POST", { email, full_name, password })),
+  me: () => request<User>("/auth/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request<void>("/auth/password", json("POST", { current_password, new_password })),
 
-  // Search
-  search: (query: string, options: { mode?: "hybrid" | "vector" | "keyword"; limit?: number; collection_id?: string }) =>
-    request<{ query: string; total_hits: number; results: SearchResultItem[] }>("/search", {
-      method: "POST",
-      body: JSON.stringify({ query, ...options }),
-    }),
+  directory: () => request<DirectoryEntry[]>("/users/directory"),
+  users: () => request<User[]>("/users"),
+  updateUser: (id: string, data: { role?: Role; is_active?: boolean }) => request<User>(`/users/${id}`, json("PATCH", data)),
 
-  // Chat
-  getConversations: () => request<ConversationItem[]>("/conversations"),
-  getConversation: (id: string) => request<ConversationItem>(`/conversations/${id}`),
-  createConversation: (title?: string) =>
-    request<ConversationItem>("/conversations", {
-      method: "POST",
-      body: JSON.stringify({ title: title || "New Investigation" }),
-    }),
-  deleteConversation: (id: string) =>
-    request<{ success: boolean }>(`/conversations/${id}`, {
-      method: "DELETE",
-    }),
-  sendMessage: (conversationId?: string | null, message?: string) =>
-    request<{ message: MessageItem; conversation_id: string }>("/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        conversation_id: conversationId && !conversationId.startsWith("temp_") ? conversationId : null,
-        message: message || "",
-      }),
-    }),
+  documents: () => request<DocumentItem[]>("/documents"),
+  document: (id: string) => request<DocumentDetail>(`/documents/${id}`),
+  upload: (file: File, opts: { title?: string; access_level: AccessLevel; user_ids?: string[] }) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts.title) form.append("title", opts.title);
+    form.append("access_level", opts.access_level);
+    (opts.user_ids || []).forEach((id) => form.append("user_ids", id));
+    return request<DocumentItem>("/documents", { method: "POST", body: form });
+  },
+  setAccess: (id: string, access_level: AccessLevel, user_ids: string[]) =>
+    request<DocumentItem>(`/documents/${id}/access`, json("PUT", { access_level, user_ids })),
+  reprocess: (id: string) => request<DocumentItem>(`/documents/${id}/reprocess`, { method: "POST" }),
+  deleteDocument: (id: string) => request<void>(`/documents/${id}`, { method: "DELETE" }),
+  downloadDocument: async (doc: DocumentItem) => {
+    const token = readToken();
+    const res = await fetch(`${API_BASE}/documents/${doc.id}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, "Couldn't download the file.");
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: doc.filename });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  addSamples: () => request<{ added: string[] }>("/system/sample-documents", { method: "POST" }),
+  reindex: () => request<{ chunks_updated: number }>("/system/reindex", { method: "POST" }),
 
-  // Evaluation
-  getEvaluationDataset: () => request<any[]>("/evaluation/dataset"),
-  runEvaluation: () => request<EvaluationMetricReport>("/evaluation/run", { method: "POST" }),
-  getEvaluationReport: () => request<EvaluationMetricReport>("/evaluation/report"),
+  search: (query: string, mode: SearchMode, limit = 12) =>
+    request<SearchResponse>("/search", json("POST", { query, mode, limit })),
 
-  // Seed & Reset Demo Data
-  seedDemoData: () => request<{ message: string; documents_created: number }>("/demo/seed", { method: "POST" }),
-  resetDemoData: () => request<{ success: boolean; message: string; documents_created: number }>("/demo/reset", { method: "POST" }),
+  conversations: () => request<ConversationSummary[]>("/conversations"),
+  conversation: (id: string) => request<Conversation>(`/conversations/${id}`),
+  deleteConversation: (id: string) => request<void>(`/conversations/${id}`, { method: "DELETE" }),
+  ask: (message: string, conversation_id?: string | null) =>
+    request<ChatResponse>("/chat", json("POST", { message, conversation_id: conversation_id || null })),
+
+  latestEvaluation: () => request<EvaluationRun | null>("/evaluation/latest"),
+  runEvaluation: () => request<EvaluationRun>("/evaluation/run", { method: "POST" }),
 };

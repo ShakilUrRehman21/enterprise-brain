@@ -1,90 +1,76 @@
-import os
-import json
 import logging
 from typing import Generator
-from sqlalchemy import create_engine, text, TypeDecorator, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+from sqlalchemy import create_engine, event, inspect
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Custom Embedding column that works on PostgreSQL with pgvector, and on SQLite as JSON/Text
-class VectorType(TypeDecorator):
-    impl = Text
-    cache_ok = True
 
-    def process_bind_param(self, value, dialect):
-        if value is None:
-            return None
-        if isinstance(value, (list, tuple)):
-            if dialect.name == "postgresql":
-                # If pgvector is installed in postgres, string format is '[0.1, 0.2, ...]'
-                return f"[{','.join(str(float(x)) for x in value)}]"
-            return json.dumps([float(x) for x in value])
-        return str(value)
+class Base(DeclarativeBase):
+    pass
 
-    def process_result_value(self, value, dialect):
-        if value is None:
-            return None
-        if isinstance(value, list):
-            return value
-        if isinstance(value, str):
-            value = value.strip()
-            if value.startswith("[") and value.endswith("]"):
-                try:
-                    return json.loads(value)
-                except Exception:
-                    # fallback split
-                    return [float(x.strip()) for x in value[1:-1].split(",") if x.strip()]
-        return value
 
-Base = declarative_base()
+def _build_engine(url: str) -> Engine:
+    if url.startswith("sqlite"):
+        eng = create_engine(url, connect_args={"check_same_thread": False})
 
-def get_engine():
-    # If testing mode is active, use dedicated isolated test SQLite database
-    if os.environ.get("TESTING") == "1":
-        test_engine = create_engine(
-            "sqlite:///./test_enterprise_brain.db",
-            connect_args={"check_same_thread": False}
-        )
-        return test_engine, False
+        @event.listens_for(eng, "connect")
+        def _sqlite_pragmas(dbapi_conn, _):  # pragma: no cover - trivial
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.close()
 
-    # Attempt to connect to DATABASE_URL (PostgreSQL)
-    try:
-        engine = create_engine(
-            settings.DATABASE_URL,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 3} if "postgresql" in settings.DATABASE_URL else {}
-        )
-        # Test connection
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info(f"Connected to primary database: {settings.DATABASE_URL.split('@')[-1]}")
-        return engine, True
-    except Exception as e:
-        logger.warning(f"Could not connect to primary PostgreSQL database ({e}). Falling back to SQLite: {settings.SQLITE_FALLBACK_URL}")
-        sqlite_engine = create_engine(
-            settings.SQLITE_FALLBACK_URL,
-            connect_args={"check_same_thread": False}
-        )
-        return sqlite_engine, False
-        return sqlite_engine, False
+        return eng
+    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=10)
 
-engine, is_postgres = get_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-def init_db():
-    global engine, is_postgres
-    try:
-        if is_postgres:
-            with engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-                conn.commit()
-    except Exception as e:
-        logger.warning(f"pgvector extension creation notice: {e}")
+engine: Engine = _build_engine(settings.database_url)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
+
+class LegacySchemaError(RuntimeError):
+    pass
+
+
+def _check_legacy_schema() -> None:
+    """The pre-1.0 demo schema had no passwords; its users can't sign in.
+
+    Fail fast with an actionable message instead of crashing later on inserts.
+    """
+    insp = inspect(engine)
+    if "users" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("users")}
+        if "password_hash" not in cols:
+            raise LegacySchemaError(
+                "This database was created by an older version of Enterprise Brain "
+                "(demo header login, no passwords). Reset it with "
+                "`python -m app.manage reset-db` (this deletes all data), "
+                "or point DATABASE_URL at a new database."
+            )
+
+
+def init_db() -> None:
+    from app import models  # noqa: F401 - register tables
+
+    _check_legacy_schema()
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables initialized successfully.")
+
+
+def reset_db() -> None:
+    from app import models  # noqa: F401
+
+    from sqlalchemy import MetaData
+
+    meta = MetaData()
+    meta.reflect(bind=engine)
+    meta.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -92,4 +78,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-

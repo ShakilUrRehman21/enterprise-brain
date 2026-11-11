@@ -1,151 +1,203 @@
-import os
-import shutil
+"""Document ingestion: store the upload, then extract → chunk → embed → index."""
+import hashlib
 import logging
-from typing import Optional, List
-from fastapi import UploadFile, HTTPException, status
+import os
+import re
+import uuid
+from pathlib import Path
+from typing import BinaryIO, Iterable, Optional
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from app.core.config import settings
-from app.models.entities import Document, DocumentChunk, DocumentPermission, User
-from app.services.ingestion.extractor import DocumentExtractor
-from app.services.ingestion.chunker import TextChunker
-from app.services.embeddings.embedder import embedding_service
+from app.core.database import SessionLocal
+from app.models import AccessLevel, DocStatus, Document, DocumentChunk, DocumentShare, User
+from app.services.embeddings import embeddings
+from app.services.ingestion.chunker import chunk_sections
+from app.services.ingestion.extractor import SUPPORTED_TYPES, ExtractionError, extract
 
 logger = logging.getLogger(__name__)
+_COPY_BLOCK = 1024 * 1024
 
-ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "md"}
 
-class IngestionPipeline:
-    def __init__(self, db: Session):
-        self.db = db
-        self.chunker = TextChunker()
+def storage_path(doc: Document) -> Path:
+    return settings.upload_path / doc.storage_name
 
-    def validate_file(self, file: UploadFile) -> str:
-        if not file.filename:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Filename is missing."
-            )
 
-        ext = file.filename.split(".")[-1].lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported file format '{ext}'. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}."
-            )
-        return ext
+def title_from_filename(filename: str) -> str:
+    stem = Path(filename).stem
+    return re.sub(r"[_\-]+", " ", stem).strip().title()[:255] or "Untitled document"
 
-    def process_upload(
-        self,
-        file: UploadFile,
-        current_user: User,
-        title: Optional[str] = None,
-        collection_id: Optional[str] = None,
-        access_level: str = "organization"
-    ) -> Document:
-        ext = self.validate_file(file)
 
-        # Check file size
-        file.file.seek(0, os.SEEK_END)
-        file_size = file.file.tell()
-        file.file.seek(0)
+def _bad_request(msg: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
-        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-        if file_size > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File exceeds maximum size limit of {settings.MAX_UPLOAD_SIZE_MB}MB."
-            )
 
-        if file_size == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Uploaded file is empty."
-            )
+def store_upload(
+    db: Session,
+    *,
+    owner: User,
+    filename: str,
+    stream: BinaryIO,
+    title: Optional[str] = None,
+    access_level: str = AccessLevel.ORGANIZATION,
+    share_with: Iterable[str] = (),
+    is_sample: bool = False,
+) -> Document:
+    """Validate and persist an uploaded file. The document starts as `processing`;
+    call `process_document` (usually as a background task) to index it."""
+    safe_name = Path(filename or "").name.strip()
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    if ext not in SUPPORTED_TYPES:
+        raise _bad_request("Upload a PDF, DOCX, TXT or Markdown file.")
+    if access_level not in AccessLevel.ALL:
+        raise _bad_request("Access must be private, shared or organization.")
 
-        doc_title = title or file.filename.rsplit(".", 1)[0].replace("_", " ").title()
-
-        # Create Document record with status "uploaded"
-        doc = Document(
-            title=doc_title,
-            filename=file.filename,
-            file_path="",
-            file_type=ext,
-            file_size=file_size,
-            owner_id=current_user.id,
-            collection_id=collection_id,
-            status="uploaded",
-            access_level=access_level
+    settings.upload_path.mkdir(parents=True, exist_ok=True)
+    storage_name = f"{uuid.uuid4().hex}.{ext}"
+    dest = settings.upload_path / storage_name
+    limit = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    size, digest = 0, hashlib.sha256()
+    try:
+        with open(dest, "wb") as out:
+            while block := stream.read(_COPY_BLOCK):
+                size += len(block)
+                if size > limit:
+                    raise _bad_request(f"Files can be up to {settings.MAX_UPLOAD_SIZE_MB} MB.")
+                digest.update(block)
+                out.write(block)
+        if size == 0:
+            raise _bad_request("That file is empty.")
+        content_hash = digest.hexdigest()
+        duplicate = db.scalar(
+            select(Document).where(Document.owner_id == owner.id, Document.content_hash == content_hash)
         )
-        self.db.add(doc)
-        self.db.commit()
-        self.db.refresh(doc)
-
-        # Save file to disk
-        safe_filename = f"{doc.id}_{file.filename}"
-        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-        disk_path = os.path.join(settings.UPLOAD_DIR, safe_filename)
-
-        with open(disk_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        doc.file_path = disk_path
-        self.db.commit()
-
-        # Ingest and Index
-        self.ingest_document(doc)
-        return doc
-
-    def ingest_document(self, doc: Document) -> None:
-        """
-        Runs text extraction, chunking, and embedding generation.
-        """
-        try:
-            doc.status = "processing"
-            self.db.commit()
-
-            # 1. Text Extraction
-            sections = DocumentExtractor.extract_text_from_file(doc.file_path, doc.file_type)
-            extracted_text = "\n\n".join(s.content for s in sections)
-            doc.extracted_text_preview = extracted_text[:2000]
-
-            # 2. Structural Chunking
-            chunks = self.chunker.chunk_sections(sections)
-            if not chunks:
-                raise ValueError("No meaningful content could be extracted from document.")
-
-            # 3. Embedding Generation
-            texts_to_embed = [c.content for c in chunks]
-            embeddings = embedding_service.embed_texts(texts_to_embed)
-
-            # 4. Remove any prior chunks if retrying
-            self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete()
-
-            # 5. Save Chunks
-            for chunk_data, emb in zip(chunks, embeddings):
-                chunk_record = DocumentChunk(
-                    document_id=doc.id,
-                    chunk_index=chunk_data.chunk_index,
-                    content=chunk_data.content,
-                    page_number=chunk_data.page_number,
-                    section_title=chunk_data.section_title,
-                    token_count=chunk_data.token_count,
-                    embedding=emb
-                )
-                self.db.add(chunk_record)
-
-            doc.status = "indexed"
-            doc.error_message = None
-            self.db.commit()
-            self.db.refresh(doc)
-            logger.info(f"Successfully indexed document {doc.id} ({doc.title}) with {len(chunks)} chunks.")
-
-        except Exception as e:
-            logger.error(f"Failed to ingest document {doc.id}: {e}", exc_info=True)
-            doc.status = "failed"
-            doc.error_message = str(e)
-            self.db.commit()
+        if duplicate:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Failed to process and index document: {str(e)}"
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"You already uploaded this file as “{duplicate.title}”.",
             )
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
 
+    doc = Document(
+        title=(title or "").strip()[:255] or title_from_filename(safe_name),
+        filename=safe_name[:255],
+        storage_name=storage_name,
+        file_type=ext,
+        file_size=size,
+        content_hash=content_hash,
+        owner_id=owner.id,
+        access_level=access_level,
+        status=DocStatus.PROCESSING,
+        is_sample=is_sample,
+    )
+    db.add(doc)
+    db.flush()
+    if access_level == AccessLevel.SHARED:
+        set_shares(db, doc, share_with)
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def set_shares(db: Session, doc: Document, user_ids: Iterable[str]) -> None:
+    wanted = {uid for uid in user_ids if uid and uid != doc.owner_id}
+    existing = set(db.scalars(select(User.id).where(User.id.in_(wanted))).all()) if wanted else set()
+    doc.shares.clear()
+    db.flush()
+    for uid in existing:
+        doc.shares.append(DocumentShare(user_id=uid))
+
+
+def process_document(document_id: str) -> None:
+    """Extract, chunk and embed a document in its own DB session.
+
+    Safe to run in a background task: every failure is recorded on the
+    document instead of being raised."""
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, document_id)
+        if doc is None:
+            return
+        try:
+            sections, pages = extract(storage_path(doc), doc.file_type)
+            chunks = chunk_sections(sections, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+            if not chunks:
+                raise ExtractionError("No readable text found.")
+            vectors, model_id = embeddings.embed_documents(
+                [f"{doc.title}\n{c.section_title or ''}\n{c.content}" for c in chunks]
+            )
+            db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete()
+            db.add_all(
+                DocumentChunk(
+                    document_id=doc.id,
+                    chunk_index=c.index,
+                    content=c.content,
+                    page_number=c.page_number,
+                    section_title=c.section_title,
+                    word_count=c.word_count,
+                    embedding=v,
+                    embedding_model=model_id,
+                )
+                for c, v in zip(chunks, vectors)
+            )
+            doc.status, doc.error_message = DocStatus.INDEXED, None
+            doc.page_count, doc.chunk_count = pages, len(chunks)
+            db.commit()
+            logger.info("Indexed %s (%d chunks, %s)", doc.title, len(chunks), model_id)
+        except FileNotFoundError:
+            db.rollback()
+            _fail(db, doc, "The stored file is missing. Delete this document and upload it again.")
+        except ExtractionError as exc:
+            db.rollback()
+            _fail(db, doc, str(exc))
+        except Exception as exc:  # noqa: BLE001 - record anything unexpected
+            db.rollback()
+            logger.exception("Indexing failed for %s", document_id)
+            _fail(db, doc, f"Indexing failed: {exc}")
+    finally:
+        db.close()
+
+
+def _fail(db: Session, doc: Document, message: str) -> None:
+    doc.status, doc.error_message = DocStatus.FAILED, message[:2000]
+    db.commit()
+
+
+def delete_document(db: Session, doc: Document) -> None:
+    path = storage_path(doc)
+    db.delete(doc)
+    db.commit()
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:  # pragma: no cover
+        logger.warning("Couldn't remove %s: %s", path, exc)
+
+
+def reindex_stale_embeddings(db: Session) -> int:
+    """Re-embed chunks produced by a different model than the active one
+    (e.g. after adding a Gemini key). Returns the number of chunks updated."""
+    active = embeddings.active.model_id
+    doc_ids = db.scalars(
+        select(DocumentChunk.document_id)
+        .where((DocumentChunk.embedding_model != active) | DocumentChunk.embedding_model.is_(None))
+        .distinct()
+    ).all()
+    updated = 0
+    for doc_id in doc_ids:
+        doc = db.get(Document, doc_id)
+        chunks = list(doc.chunks)
+        vectors, model_id = embeddings.embed_documents(
+            [f"{doc.title}\n{c.section_title or ''}\n{c.content}" for c in chunks]
+        )
+        for c, v in zip(chunks, vectors):
+            c.embedding, c.embedding_model = v, model_id
+        db.commit()
+        updated += len(chunks)
+    return updated
