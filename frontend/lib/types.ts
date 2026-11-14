@@ -133,6 +133,7 @@ export interface SystemStatus {
   registration_open: boolean;
   documents_indexed: number;
   stale_chunks: number;
+  last_ai_error: string | null;
 }
 
 export interface EvaluationRow {

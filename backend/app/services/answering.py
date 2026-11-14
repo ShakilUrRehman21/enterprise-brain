@@ -40,6 +40,11 @@ _FOLLOW_UP_RE = re.compile(
     r"^(and|also|what about|how about|same for|why)\b|\b(it|its|that|this|they|them|those|these|he|she|his|her|there)\b",
     re.IGNORECASE,
 )
+_SMALL_TALK_RE = re.compile(
+    r"^(hi+|hey+|hello+|yo|hiya|good (morning|afternoon|evening)|thanks?( you)?|thank you|ok(ay)?|cool|bye)[\s!.?,]*$",
+    re.IGNORECASE,
+)
+SMALL_TALK_MESSAGE = "Hi! Ask me anything about the documents you have access to, and I'll answer with the sources."
 _MULTI_SOURCE_RE = re.compile(r"\b(compare|comparison|versus|vs\.?|both|across|between|differ\w*)\b|\b\w+ and \w+", re.IGNORECASE)
 _CITE_GROUP_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 _CITE_RE = re.compile(r"\[(\d+)\]")
@@ -63,6 +68,9 @@ class AnswerService:
     # ------------------------------------------------------------------ public
     def answer(self, question: str, user: User, history: Optional[List[Tuple[str, str]]] = None) -> AnswerResult:
         history = history or []
+        llm_failed = False
+        if _SMALL_TALK_RE.match(question.strip()):
+            return AnswerResult(SMALL_TALK_MESSAGE, engine="system")
         query = self._standalone_query(question, history)
         hits, qt, _ = self.retriever.search(query, user, mode="hybrid", limit=settings.RETRIEVAL_TOP_K)
         scoring_terms = qt
@@ -94,8 +102,11 @@ class AnswerService:
                 result = self._answer_with_llm(question, context[: settings.RETRIEVAL_TOP_K], history)
             except LLMError as exc:
                 logger.warning("%s — falling back to extractive answer.", exc)
+                llm_failed = True
         if result is None:
             result = self._answer_offline(question, relevant, scoring_terms, multi_source)
+            if llm_failed and not result.abstained:
+                result.engine = "extractive-fallback"
         result.retrieval_query = query
         result.retrieved = hits
         return result
@@ -172,8 +183,8 @@ class AnswerService:
                     body = [s for s in split_sentences(h.chunk.content) if not is_heading(s)]
                     if body:
                         picked[rank] = list(enumerate(body[:2]))
-        if not picked:
-            # Matched only via title/section heading: summarise the top section.
+        if not picked and hits[0].coverage >= settings.MIN_QUERY_COVERAGE:
+            # Matched via title/section heading (not just vague similarity): summarise the top section.
             body = [s for s in split_sentences(hits[0].chunk.content) if not is_heading(s)]
             if body:
                 picked[0] = list(enumerate(body[:2]))

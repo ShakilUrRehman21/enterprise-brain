@@ -105,3 +105,9 @@ def test_list_sections_and_subject_overview(client, admin):
     assert all(c in certs["content"] for c in ("AWS Solutions Architect", "Kubernetes", "Terraform"))
     overview = ask(client, admin[0], "Who is Jane Doe?")["message"]
     assert "Platform engineer" in overview["content"]
+
+
+def test_greetings_get_a_friendly_reply_not_a_document_dump(client, admin, samples):
+    msg = ask(client, admin[0], "Hi")["message"]
+    assert not msg["abstained"] and msg["citations"] == []
+    assert msg["engine"] == "system"

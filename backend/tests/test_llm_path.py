@@ -65,7 +65,7 @@ def test_uncited_answers_are_rejected(client, admin, samples, fake_llm):
 def test_falls_back_to_extractive_when_model_fails(client, admin, samples, fake_llm):
     fake_llm(LLMError("quota exceeded"))
     msg = ask(client, admin[0], "How long do I have to submit expenses?")
-    assert msg["engine"] == "extractive" and "30 days" in msg["content"]
+    assert msg["engine"] == "extractive-fallback" and "30 days" in msg["content"]
 
 
 def test_restricted_text_never_reaches_the_prompt(client, admin, member, samples, fake_llm):

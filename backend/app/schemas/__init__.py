@@ -185,6 +185,7 @@ class SystemStatus(BaseModel):
     registration_open: bool
     documents_indexed: int
     stale_chunks: int
+    last_ai_error: Optional[str] = None
 
 
 class EvaluationRunOut(ORM):

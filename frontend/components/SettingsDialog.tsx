@@ -88,6 +88,11 @@ export function SettingsDialog({
             <dt className="text-graphite">Version</dt>
             <dd>{status.version}</dd>
           </dl>
+          {user.role === "admin" && status.last_ai_error && (
+            <Notice tone="error" className="mt-4">
+              Last Gemini error: {status.last_ai_error}
+            </Notice>
+          )}
           {user.role === "admin" && status.stale_chunks > 0 && (
             <div className="mt-4">
               <Notice tone="caution">

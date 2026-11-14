@@ -39,7 +39,7 @@ def public_info(db: Session = Depends(get_db)):
 
 
 @router.get("/system/status", response_model=SystemStatus)
-def system_status(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def system_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     active = embeddings.active.model_id
     stale = db.scalar(
         select(func.count(DocumentChunk.id)).where(
@@ -55,6 +55,7 @@ def system_status(_: User = Depends(get_current_user), db: Session = Depends(get
         registration_open=settings.ALLOW_REGISTRATION,
         documents_indexed=db.scalar(select(func.count(Document.id)).where(Document.status == DocStatus.INDEXED)) or 0,
         stale_chunks=stale or 0,
+        last_ai_error=getattr(llm, "last_error", None) if user.is_admin else None,
     )
 
 

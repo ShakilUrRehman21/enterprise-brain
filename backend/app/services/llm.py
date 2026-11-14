@@ -60,6 +60,7 @@ class GeminiLLM:
         self._client = get_client()
         self.model = model
         self.last_model = model
+        self.last_error: Optional[str] = None
         self._use_thinking_config = True
 
     def _config(self, model: str, system: str, temperature: float, max_tokens: int):
@@ -114,7 +115,17 @@ class GeminiLLM:
                 raise LLMError("Gemini returned an empty response.")
             return text
 
-    def generate(
+    def generate(self, *args, **kwargs) -> str:
+        """Generate text, remembering the last failure for the status page."""
+        try:
+            text = self._generate(*args, **kwargs)
+        except LLMError as exc:
+            self.last_error = str(exc)[:500]
+            raise
+        self.last_error = None
+        return text
+
+    def _generate(
         self, prompt: str, system: str, temperature: float = 0.1, max_tokens: int = 2048, budget: Optional[float] = None
     ) -> str:
         deadline = time.monotonic() + (budget if budget is not None else settings.ANSWER_TIME_BUDGET_SECONDS)

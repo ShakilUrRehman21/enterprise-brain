@@ -43,6 +43,10 @@ export function Answer({
   const byNumber = useMemo(() => new Map(message.citations.map((c) => [c.number, c])), [message.citations]);
   const markdown = useMemo(() => linkCitations(message.content), [message.content]);
 
+  if (message.engine === "system") {
+    return <p className="prose-answer">{message.content}</p>;
+  }
+
   if (message.abstained) {
     return (
       <div className="flex gap-3 rounded-md bg-caution-wash px-4 py-3 text-caution">
@@ -120,7 +124,13 @@ export function Answer({
       )}
 
       <div className="mt-3 flex items-center gap-3 text-xs text-faint">
-        <span>{message.engine === "gemini" ? "Written by Gemini from the sources" : "Quoted directly from the sources"}</span>
+        <span>
+          {message.engine === "gemini"
+            ? "Written by Gemini from the sources"
+            : message.engine === "extractive-fallback"
+              ? "Gemini didn't respond, so this is quoted directly from the sources"
+              : "Quoted directly from the sources"}
+        </span>
         <button type="button" onClick={copy} className="inline-flex items-center gap-1 hover:text-ink">
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
