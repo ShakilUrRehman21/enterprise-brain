@@ -46,7 +46,7 @@ Frontend on :3000, API docs at http://localhost:8000/api/docs.
 
 ## Deploying
 
-- **Backend on Render:** `render.yaml` provisions the API and a Postgres database and generates `SECRET_KEY`. Add `GEMINI_API_KEY` in the dashboard.
+- **Backend on Render:** use a Docker web service with **Root Directory** `backend` (the Dockerfile builds from that folder and listens on Render's `$PORT`). Required environment variables: `SECRET_KEY` and `GEMINI_API_KEY`; add `DATABASE_URL` from a Render Postgres database so data survives redeploys. `render.yaml` sets all of this up as a Blueprint.
 - **Frontend on Vercel:** set `BACKEND_API_URL` to the backend's URL (for example `https://your-api.onrender.com`). The frontend proxies `/api/*` to it, so no CORS setup is needed.
 
 ## How it works
@@ -75,7 +75,9 @@ cd backend && python -m pytest          # 50 tests, uses a temporary database
 python evaluation/run_evaluation.py      # answer-quality benchmark, never touches real data
 ```
 
-The benchmark (`evaluation/dataset.jsonl`, 31 questions) checks that answers contain the required facts, cite the right documents, decline questions the documents don't cover, and never leak a restricted document to a member. Offline results: 29/31 passed, 0 leaks, 100% of unanswerable questions declined. The two failures are multi-document synthesis questions, which need Gemini. Admins can also run it from **Answer quality** in the app.
+The benchmark (`backend/evaluation/dataset.jsonl`, 31 questions) checks that answers contain the required facts, cite the right documents, decline questions the documents don't cover, and never leak a restricted document to a member. Offline results: 29/31 passed, 0 leaks, 100% of unanswerable questions declined. The two failures are multi-document synthesis questions, which need Gemini. Admins can also run it from **Answer quality** in the app.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the tests, the benchmark, the frontend build and both Docker builds on every push, so a broken build shows up before it reaches Render or Vercel.
 
 ## Admin commands
 

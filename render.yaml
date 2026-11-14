@@ -1,10 +1,12 @@
+# Render Blueprint: Docker backend + Postgres. The frontend deploys on Vercel
+# (set BACKEND_API_URL there to this service's URL).
 services:
   - type: web
     name: enterprise-brain-backend
-    runtime: python
+    runtime: docker
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
@@ -17,8 +19,6 @@ services:
           property: connectionString
       - key: GEMINI_API_KEY
         sync: false
-      - key: BACKEND_CORS_ORIGINS
-        sync: false # e.g. https://your-frontend.vercel.app (only if the frontend calls the API directly)
 
 databases:
   - name: enterprise-brain-db

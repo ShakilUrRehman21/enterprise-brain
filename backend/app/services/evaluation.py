@@ -12,12 +12,12 @@ from typing import Dict, List
 
 from sqlalchemy.orm import Session
 
-from app.core.config import PROJECT_DIR
+from app.core.config import BACKEND_DIR
 from app.models import EvaluationRun, Role, User
 from app.services.answering import AnswerService
 from app.services.llm import llm
 
-DATASET_PATH = PROJECT_DIR / "evaluation" / "dataset.jsonl"
+DATASET_PATH = BACKEND_DIR / "evaluation" / "dataset.jsonl"
 
 
 def load_dataset(path: Path = DATASET_PATH) -> List[Dict]:

@@ -15,9 +15,7 @@ services:
       retries: 10
 
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     restart: unless-stopped
     depends_on:
       db:
@@ -25,14 +23,14 @@ services:
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql://brain:brain@db:5432/enterprise_brain
-      UPLOAD_DIR: /data/uploads
+      UPLOAD_DIR: /app/data/uploads
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     volumes:
-      - uploads:/data/uploads
+      - uploads:/app/data/uploads
     ports:
       - "8000:8000"
 
