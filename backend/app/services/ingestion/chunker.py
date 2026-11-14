@@ -1,82 +1,53 @@
+"""Split sections into overlapping, sentence-aligned chunks."""
+from dataclasses import dataclass
 from typing import List, Optional
-from app.services.ingestion.extractor import ExtractedSection
-from app.core.config import settings
 
+from app.services.ingestion.extractor import Section
+from app.services.text import split_sentences
+
+
+@dataclass
 class Chunk:
-    def __init__(
-        self,
-        chunk_index: int,
-        content: str,
-        page_number: Optional[int] = None,
-        section_title: Optional[str] = None,
-        token_count: int = 0
-    ):
-        self.chunk_index = chunk_index
-        self.content = content
-        self.page_number = page_number
-        self.section_title = section_title
-        self.token_count = token_count
+    index: int
+    content: str
+    page_number: Optional[int]
+    section_title: Optional[str]
+    word_count: int
 
-class TextChunker:
-    def __init__(self, chunk_size: int = settings.CHUNK_SIZE, chunk_overlap: int = settings.CHUNK_OVERLAP):
-        # 1 token is approximately 4 characters in English
-        self.chunk_size_tokens = chunk_size
-        self.overlap_tokens = chunk_overlap
-        self.target_char_size = chunk_size * 4
-        self.overlap_chars = chunk_overlap * 4
 
-    def chunk_sections(self, sections: List[ExtractedSection]) -> List[Chunk]:
-        """
-        Takes extracted structured sections and splits them into sized chunks with overlap,
-        respecting section boundaries and preserving page references.
-        """
-        all_chunks: List[Chunk] = []
-        global_index = 0
+def chunk_sections(sections: List[Section], max_words: int, overlap_words: int) -> List[Chunk]:
+    chunks: List[Chunk] = []
+    for section in sections:
+        if len(section.content.split()) <= max_words:
+            sentences = [section.content]
+        else:
+            sentences = []
+            for sent in split_sentences(section.content):
+                w = sent.split()
+                # Hard-wrap run-on text (e.g. PDFs without punctuation).
+                sentences.extend(" ".join(w[i : i + max_words]) for i in range(0, len(w), max_words))
+        window: List[str] = []
+        words = 0
+        for sent in sentences:
+            n = len(sent.split())
+            if window and words + n > max_words:
+                chunks.append(_make(len(chunks), window, section))
+                # Carry trailing sentences forward as overlap.
+                carry, carried = [], 0
+                for prev in reversed(window):
+                    w = len(prev.split())
+                    if carried + w > overlap_words:
+                        break
+                    carry.insert(0, prev)
+                    carried += w
+                window, words = carry, carried
+            window.append(sent)
+            words += n
+        if window:
+            chunks.append(_make(len(chunks), window, section))
+    return chunks
 
-        for section in sections:
-            text = section.content.strip()
-            if not text:
-                continue
 
-            words = text.split()
-            # If section is small enough, keep as single chunk
-            if len(words) <= self.chunk_size_tokens:
-                all_chunks.append(
-                    Chunk(
-                        chunk_index=global_index,
-                        content=text,
-                        page_number=section.page_number,
-                        section_title=section.section_title,
-                        token_count=len(words)
-                    )
-                )
-                global_index += 1
-                continue
-
-            # Sliding window over words with overlap
-            step = max(50, self.chunk_size_tokens - self.overlap_tokens)
-            start = 0
-
-            while start < len(words):
-                end = min(len(words), start + self.chunk_size_tokens)
-                chunk_words = words[start:end]
-                chunk_text = " ".join(chunk_words).strip()
-
-                if len(chunk_text) > 40:  # Skip tiny fragments
-                    all_chunks.append(
-                        Chunk(
-                            chunk_index=global_index,
-                            content=chunk_text,
-                            page_number=section.page_number,
-                            section_title=section.section_title,
-                            token_count=len(chunk_words)
-                        )
-                    )
-                    global_index += 1
-
-                if end == len(words):
-                    break
-                start += step
-
-        return all_chunks
-
+def _make(index: int, sentences: List[str], section: Section) -> Chunk:
+    text = " ".join(sentences) if len(sentences) > 1 else sentences[0]
+    return Chunk(index, text.strip(), section.page_number, section.heading, len(text.split()))

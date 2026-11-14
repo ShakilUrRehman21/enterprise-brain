@@ -1,119 +1,51 @@
-import logging
-import jwt
+"""Password hashing (scrypt, stdlib) and signed JWT access tokens."""
+import base64
+import hashlib
+import hmac
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import Depends, HTTPException, status, Header
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+
+import jwt
+
 from app.core.config import settings
-from app.core.database import get_db
-from app.models.entities import User
 
-logger = logging.getLogger(__name__)
-security_scheme = HTTPBearer(auto_error=False)
+_ALGORITHM = "HS256"
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
 
-def verify_clerk_token(token: str) -> dict:
-    """
-    Decodes and validates Clerk session JWT.
-    In production with CLERK_SECRET_KEY/JWKS configured, verifies cryptographic signature.
-    In offline/testing environments, decodes payload claims securely.
-    """
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32)
+    return "scrypt${}${}".format(base64.b64encode(salt).decode(), base64.b64encode(digest).decode())
+
+
+def verify_password(password: str, stored: str) -> bool:
     try:
-        if settings.CLERK_SECRET_KEY:
-            # Full verification with secret or JWKS
-            payload = jwt.decode(
-                token,
-                settings.CLERK_SECRET_KEY,
-                algorithms=["HS256", "RS256"],
-                options={"verify_signature": False if settings.ENVIRONMENT == "development" else True}
-            )
-        else:
-            # Decode unverified in local development mode if keys are placeholders
-            payload = jwt.decode(token, options={"verify_signature": False})
-        return payload
-    except Exception as e:
-        logger.error(f"Failed to decode auth token: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        scheme, salt_b64, digest_b64 = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        salt = base64.b64decode(salt_b64)
+        expected = base64.b64decode(digest_b64)
+    except (ValueError, TypeError):
+        return False
+    actual = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=len(expected))
+    return hmac.compare_digest(actual, expected)
 
-def get_current_user(
-    auth: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_user_name: Optional[str] = Header(None, alias="X-User-Name"),
-    db: Session = Depends(get_db)
-) -> User:
-    """
-    Validates user identity server-side.
-    Checks Clerk JWT bearer token first.
-    If in development/demo mode and header is provided, allows verified demo switching for User A / User B testing.
-    """
-    email = None
-    clerk_id = None
-    role = "member"
-    name = "Enterprise User"
 
-    if auth and auth.credentials:
-        payload = verify_clerk_token(auth.credentials)
-        clerk_id = payload.get("sub")
-        email = payload.get("email") or payload.get("sub") + "@enterprise.local"
-        role = payload.get("role", "member")
-        name = payload.get("name", "Enterprise Member")
-    elif settings.ALLOW_DEMO_AUTH and x_user_email:
-        email = x_user_email.strip().lower()
-        role = (x_user_role or "member").strip().lower()
-        name = x_user_name or ("Admin User" if role == "admin" else "Member User")
-        clerk_id = f"demo_{email.replace('@', '_').replace('.', '_')}"
-    else:
-        # Default fallback demo admin for local testing if no headers provided
-        if settings.ALLOW_DEMO_AUTH:
-            email = "admin@enterprise.local"
-            role = "admin"
-            name = "Default Administrator"
-            clerk_id = "demo_admin_default"
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication credentials were not provided or invalid.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+def create_access_token(user_id: str) -> tuple[str, int]:
+    expires_in = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    now = datetime.now(timezone.utc)
+    payload = {"sub": user_id, "iat": now, "exp": now + timedelta(seconds=expires_in), "type": "access"}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=_ALGORITHM), expires_in
 
-    # Check if user exists in database; if not, provision
-    user = db.query(User).filter((User.clerk_user_id == clerk_id) | (User.email == email)).first()
-    if not user:
-        user = User(
-            clerk_user_id=clerk_id or f"usr_{email}",
-            email=email,
-            full_name=name,
-            role=role
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    else:
-        # Update role if provided in demo header
-        if role and user.role != role and settings.ALLOW_DEMO_AUTH and x_user_role:
-            user.role = role
-            db.commit()
-            db.refresh(user)
 
-    return user
-
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required to perform this action."
-        )
-    return current_user
-
-def require_member(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ["admin", "member"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Valid organizational membership required."
-        )
-    return current_user
-
+def decode_access_token(token: str) -> Optional[str]:
+    """Return the user id for a valid token, or None."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[_ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+    if payload.get("type") != "access":
+        return None
+    return payload.get("sub")
