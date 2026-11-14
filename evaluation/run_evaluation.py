@@ -6,7 +6,8 @@ Uses a throwaway database and upload folder, so it never touches real data:
     python evaluation/run_evaluation.py            # offline engine
     GEMINI_API_KEY=... python evaluation/run_evaluation.py   # Gemini engine
 
-Writes the full report to evaluation/results.json.
+The questions live in backend/evaluation/dataset.jsonl. Writes the full
+report to evaluation/results.json.
 """
 import json
 import os
