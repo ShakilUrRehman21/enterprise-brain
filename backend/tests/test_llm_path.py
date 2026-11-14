@@ -98,7 +98,7 @@ def test_retired_model_falls_back_to_newest_flash(monkeypatch):
     fake = type("C", (), {"models": FakeModels()})()
     client = type("Client", (), {"mode": "developer", "call": staticmethod(lambda fn: fn(fake))})()
     model = llm_module.GeminiLLM.__new__(llm_module.GeminiLLM)
-    model._client, model.model, model.last_model, model._use_thinking_config = client, "gemini-2.5-flash", "", True
+    model._client, model.model, model.last_model, model._use_thinking_config, model._busy_until = client, "gemini-2.5-flash", "", True, 0.0
 
     assert model.generate("hi", "sys") == "ok"
     assert model.model == "gemini-3.8-flash"
@@ -130,13 +130,17 @@ def test_overloaded_model_retries_then_uses_another_flash(monkeypatch):
     fake = type("C", (), {"models": FakeModels()})()
     client = type("Client", (), {"mode": "developer", "call": staticmethod(lambda fn: fn(fake))})()
     model = llm_module.GeminiLLM.__new__(llm_module.GeminiLLM)
-    model._client, model.model, model.last_model, model._use_thinking_config = client, "gemini-3.8-flash", "", True
+    model._client, model.model, model.last_model, model._use_thinking_config, model._busy_until = client, "gemini-3.8-flash", "", True, 0.0
 
     assert model.generate("hi", "sys") == "answer"
-    # two attempts on the busy model (one retry), then the next Flash model
-    assert fake.models.calls == ["gemini-3.8-flash"] * 2 + ["gemini-3.6-flash"]
+    # two attempts on the busy model (one retry), then a Lite model (different capacity)
+    assert fake.models.calls == ["gemini-3.8-flash"] * 2 + ["gemini-3.5-flash-lite"]
     assert model.model == "gemini-3.8-flash"  # overload is temporary: keep the configured model
-    assert model.last_model == "gemini-3.6-flash"
+    assert model.last_model == "gemini-3.5-flash-lite"
+    # the next question goes straight to the model that worked
+    fake.models.calls.clear()
+    assert model.generate("again", "sys") == "answer"
+    assert fake.models.calls == ["gemini-3.5-flash-lite"]
 
 
 def test_thinking_config_matches_model_family():
@@ -176,7 +180,7 @@ def test_generation_respects_the_time_budget(monkeypatch):
     fake = type("C", (), {"models": FakeModels()})()
     client = type("Client", (), {"mode": "developer", "call": staticmethod(lambda fn: fn(fake))})()
     model = llm_module.GeminiLLM.__new__(llm_module.GeminiLLM)
-    model._client, model.model, model.last_model, model._use_thinking_config = client, "gemini-3.8-flash", "", True
+    model._client, model.model, model.last_model, model._use_thinking_config, model._busy_until = client, "gemini-3.8-flash", "", True, 0.0
 
     with pytest.raises(LLMError):
         model.generate("hi", "sys", budget=45)

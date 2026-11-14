@@ -61,6 +61,7 @@ class GeminiLLM:
         self.model = model
         self.last_model = model
         self.last_error: Optional[str] = None
+        self._busy_until = 0.0
         self._use_thinking_config = True
 
     def _config(self, model: str, system: str, temperature: float, max_tokens: int):
@@ -129,6 +130,15 @@ class GeminiLLM:
         self, prompt: str, system: str, temperature: float = 0.1, max_tokens: int = 2048, budget: Optional[float] = None
     ) -> str:
         deadline = time.monotonic() + (budget if budget is not None else settings.ANSWER_TIME_BUDGET_SECONDS)
+        # The configured model was overloaded recently: go straight to the one that worked.
+        if self._busy_until > time.monotonic() and self.last_model and self.last_model != self.model:
+            try:
+                return self._generate_once(self.last_model, prompt, system, temperature, max_tokens, deadline)
+            except LLMError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Fallback model %s failed: %s", self.last_model, exc)
+                self._busy_until = 0.0
         try:
             text = self._generate_once(self.model, prompt, system, temperature, max_tokens, deadline)
             self.last_model = self.model
@@ -146,7 +156,14 @@ class GeminiLLM:
         except Exception as list_exc:  # noqa: BLE001
             logger.warning("Couldn't list Gemini models: %s", list_exc)
             raise LLMError(f"Gemini generation failed: {first_exc}") from first_exc
-        alternatives = [m for m in flash_models(names, include_lite=True) if m != self.model][:2]
+        # Overload hits a whole tier at once, so try a Lite model before other full Flash models.
+        others = [m for m in flash_models(names, include_lite=True) if m != self.model]
+        lite = [m for m in others if "lite" in m]
+        full = [m for m in others if "lite" not in m]
+        if _is_model_missing(first_exc):
+            alternatives = full[:1] + lite[:1]  # retired: replace with the newest full Flash
+        else:
+            alternatives = (lite[:1] + full[:1]) if "lite" not in self.model else (full[:1] + lite[:1])
         for alt in alternatives:
             if time.monotonic() + 5 > deadline:
                 break  # out of time: let the caller use the offline answer
@@ -167,6 +184,8 @@ class GeminiLLM:
             else:
                 logger.info("%s is busy; answered with %s.", self.model, alt)
             self.last_model = alt
+            if not _is_model_missing(first_exc):
+                self._busy_until = time.monotonic() + 300  # use the fallback for the next 5 minutes
             return text
         raise LLMError(f"Gemini generation failed: {first_exc}") from first_exc
 
